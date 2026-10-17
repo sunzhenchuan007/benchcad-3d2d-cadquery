@@ -13,15 +13,17 @@ import re
 import time
 
 from .accounting import summarize_usage
+from .journal import Journal
 from .local_accounting import (LocalAccountingError, summarize_local_usage,
                                validate_instructions, validate_rates)
 
 
 class TransportError(RuntimeError):
     """No usable model decision was received; not an execution/code error."""
-    def __init__(self, message, local_usage=None):
+    def __init__(self, message, local_usage=None, diagnostic=None):
         super().__init__(message)
         self.local_usage = local_usage
+        self.diagnostic = diagnostic
 
 
 @dataclass
@@ -110,13 +112,22 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
         f"at most {budget.execution_seconds:g} seconds and the remaining wall budget. "
         "Each reply is exactly one fenced python or submit block, with no other text. "
         "Python executes in a fresh Python process; files persist but Python variables do not. "
-        "Feedback contains stdout, stderr and changed top-level PNG images. "
+        "Feedback contains stdout, stderr and changed PNG images at workspace root or directly in output/. "
         "Read TOOLS.md for available helpers. Save output/drawing.dxf. "
         "A submit block is Python executed once, then the controller validates and freezes the drawing. "
         "Submit failure ends the task. No explicit submit means no answer, even if files exist. "
         "Scores and expert references are never available during this episode."
     )
     (log_dir / "system.txt").write_text(system, encoding="utf-8")
+    journal = Journal(log_dir / 'journal.jsonl', clock, start)
+    journal.write('episode_started', budget=vars(budget), system=system)
+    journal.write('message', message=messages[0])
+
+    def add_message(message):
+        messages.append(message)
+        journal.write('message', message=message)
+
+    api_seconds = execution_seconds = finalization_seconds = 0.0
     records, usages, local_usages = [], [], []
     rounds = calls = failures = executions = 0
     ended = "round_limit"
@@ -127,21 +138,37 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
             ended = "wall_timeout"
             break
         calls += 1
+        call_start = clock()
+        journal.write('request_started', call=calls, next_round=rounds + 1,
+                      timeout_seconds=left)
         try:
             reply = model(system, messages, timeout=left)
         except TransportError as exc:
+            duration = clock() - call_start
+            api_seconds += duration
+            journal.write('request_failed', call=calls, duration_seconds=duration,
+                          error_type=type(exc).__name__, error=str(exc),
+                          local_usage=exc.local_usage, diagnostic=exc.diagnostic)
             usages.append(None)
             local_usages.append(exc.local_usage)
             failures += 1
-            records.append({"event": "transport_failure", "call": calls, "error": str(exc)})
+            records.append({"event": "transport_failure", "call": calls, "error": str(exc),
+                            "diagnostic": exc.diagnostic})
             if failures >= budget.max_transport_failures:
                 ended = "infrastructure_failed"
                 break
             continue
         except Exception as exc:
+            duration = clock() - call_start
+            api_seconds += duration
+            journal.write('request_failed', call=calls, duration_seconds=duration,
+                          error_type=type(exc).__name__,
+                          local_usage=getattr(exc, 'local_usage', None),
+                          diagnostic=getattr(exc, 'diagnostic', None))
             usages.append(None)
             local_usages.append(getattr(exc, "local_usage", None))
-            event = {"event": "model_client_failed", "call": calls, "error_type": type(exc).__name__}
+            event = {"event": "model_client_failed", "call": calls, "error_type": type(exc).__name__,
+                     "diagnostic": getattr(exc, 'diagnostic', None)}
             if isinstance(exc, LocalAccountingError):
                 # Our accounting errors contain actionable, generic diagnostics only.
                 event["error"] = str(exc)
@@ -149,33 +176,51 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
             ended = "infrastructure_failed"
             break
         rounds += 1
+        duration = clock() - call_start
+        api_seconds += duration
+        journal.write('response_received', call=calls, round=rounds,
+                      duration_seconds=duration, status=reply.response_status,
+                      local_usage=reply.local_usage, provider_usage=reply.usage)
         usages.append(reply.usage)
         local_usages.append(reply.local_usage)
         (log_dir / f"reply_{rounds:02d}.txt").write_text(reply.text, encoding="utf-8")
-        messages.append({"role": "assistant", "text": reply.text, "images": []})
+        add_message({"role": "assistant", "text": reply.text, "images": []})
         left = budget.wall_seconds - (clock() - start)
         if left <= 0:
             ended = "wall_timeout"
             break
         if not reply.executable:
+            journal.write('unexecutable_response', round=rounds, status=reply.response_status)
             records.append({"round": rounds, "event": "unexecutable_response",
                             "response_status": reply.response_status})
-            messages.append({"role": "user", "text": "Response was incomplete or refused; no code executed. "
+            add_message({"role": "user", "text": "Response was incomplete or refused; no code executed. "
                              f"Return one complete action. Remaining rounds: {budget.rounds-rounds}.", "images": []})
             continue
         try:
             action, code = parse_action(reply.text)
         except ValueError as exc:
+            journal.write('format_error', round=rounds)
             records.append({"round": rounds, "event": "format_error"})
-            messages.append({"role": "user", "text": f"{exc} Remaining rounds: {budget.rounds-rounds}.", "images": []})
+            add_message({"role": "user", "text": f"{exc} Remaining rounds: {budget.rounds-rounds}.", "images": []})
             continue
+        execution_start = clock()
+        journal.write('execution_started', round=rounds, action=action)
         try:
             result = executor.execute(code, min(budget.execution_seconds, left))
         except Exception as exc:
+            duration = clock() - execution_start
+            execution_seconds += duration
+            journal.write('execution_failed', round=rounds, duration_seconds=duration,
+                          error_type=type(exc).__name__)
             records.append({"round": rounds, "event": "executor_failed", "error": str(exc)})
             ended = "infrastructure_failed"
             break
         executions += 1
+        duration = clock() - execution_start
+        execution_seconds += duration
+        journal.write('execution_finished', round=rounds, duration_seconds=duration,
+                      action=action, exit_code=result.exit_code, timed_out=result.timed_out,
+                      stdout=result.stdout, stderr=result.stderr, images=result.images)
         records.append({"round": rounds, "event": action, "exit_code": result.exit_code,
                         "timed_out": result.timed_out, "image_count": len(result.images)})
         if action == "submit":
@@ -185,23 +230,32 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
                 if left <= 0:
                     ended = "wall_timeout"
                 else:
+                    finalization_start = clock()
+                    journal.write('finalization_started', round=rounds)
                     try:
                         bundle = finalizer(timeout=left)
                         ended = "submitted" if clock()-start <= budget.wall_seconds else "wall_timeout"
                     except Exception as exc:
                         records.append({"round": rounds, "event": "finalization_failed", "error": str(exc)})
+                    finally:
+                        duration = clock() - finalization_start
+                        finalization_seconds += duration
+                        journal.write('finalization_finished', round=rounds,
+                                      duration_seconds=duration, ended_by=ended)
             break
         text = (f"Round {rounds}/{budget.rounds}; remaining {budget.rounds-rounds}. "
                 f"Remaining seconds: {max(0, budget.wall_seconds - (clock()-start)):.1f}. "
                 f"Exit code {result.exit_code}; timed_out={result.timed_out}\n"
                 f"stdout:\n{clipped(result.stdout)}\nstderr:\n{clipped(result.stderr)}")
-        messages.append({"role": "user", "text": text, "images": result.images})
+        add_message({"role": "user", "text": text, "images": result.images})
     local_summary = summarize_local_usage(local_usages, rates)
     provider_summary = summarize_usage(usages)
     result = {"schema": "benchcad-episode/1", "ended_by": ended,
               "submitted": ended == "submitted", "decision_rounds": rounds,
               "model_call_attempts": calls, "transport_failures": failures,
               "code_executions": executions, "wall_seconds": clock() - start,
+              "timing": {"api_seconds": api_seconds, "execution_seconds": execution_seconds,
+                         "finalization_seconds": finalization_seconds},
               "budget": vars(budget),
               "usage_metric": "local_visible_text",
               "local_usage_records": local_usages, "local_visible_text": local_summary,
@@ -211,4 +265,6 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
               "formal_score": False, "actual_fee": None}
     (log_dir / "episode.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     (log_dir / "transcript.json").write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+    journal.write('episode_finished', ended_by=ended, decision_rounds=rounds,
+                  model_call_attempts=calls, code_executions=executions)
     return result

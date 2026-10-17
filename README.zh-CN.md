@@ -4,6 +4,10 @@
 完成 STEP→DXF；可选第二个独立 episode 仅根据冻结 DXF+PNG 重建 STEP。
 被测 agent 不是 Codex CLI。Windows 仅用于开发与离线单测。
 
+简化入口见[部署、验收与运行](docs/QUICKSTART.zh-CN.md)，
+完整日志的保存与分析见[日志说明](docs/LOGGING.md)。
+[操作 JSON 转换](docs/OPERATION_LOG.md)目前仍是未核实的声明转换；可信操作捕获与剖切评分尚未接通。
+
 Linux 主机需要 Python≥3.11、非 root 账户及本机 Docker 权限。
 控制器只需 Pillow/tiktoken；CAD 依赖安装在 worker 镜像中。
 

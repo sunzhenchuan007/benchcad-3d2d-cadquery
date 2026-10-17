@@ -362,7 +362,8 @@ class StageTests(PilotTest):
 
     def test_source_snapshot_is_explicit_allowlist(self):
         self.assertEqual(set(p.relative_to(self.source).as_posix() for p in self.source.rglob('*') if p.is_file()),
-                         {'benchcad_cadquery/__init__.py', 'benchcad_cadquery/drawing.py', 'benchcad_cadquery/worker.py'})
+                         {'benchcad_cadquery/__init__.py', 'benchcad_cadquery/drawing.py',
+                          'benchcad_cadquery/templates.py', 'benchcad_cadquery/worker.py'})
 
     def test_initial_images_backward_compatible_and_context_fresh(self):
         seen = []
@@ -394,9 +395,12 @@ class CLITests(PilotTest):
     def test_sequential_api_orchestration_with_fake_transport_and_workers(self):
         step = self.root / 'input.step'
         step.write_bytes(b'original STEP must never reach reconstruction')
+        template = self.root / 'template.dxf'
+        template.write_bytes(b'curated blank template supplied by controller')
         run_dir = self.root / 'run'
         args = configure(parser().parse_args(['run', '--step', str(step), '--run-dir', str(run_dir),
-                                              '--model', 'parent-model', '--reconstruct']))
+                                              '--model', 'parent-model', '--reconstruct',
+                                              '--template', str(template)]))
         seen = []
         def model(system, messages, timeout):
             seen.append((system, messages[0].copy()))
@@ -412,6 +416,7 @@ class CLITests(PilotTest):
                 (work / 'validation.json').write_text('{"kind":"reconstruction"}')
             elif work.parent.name == 'drawing':
                 self.assertEqual((work / 'input/model.step').read_bytes(), step.read_bytes())
+                self.assertEqual((work / 'input/template.dxf').read_bytes(), template.read_bytes())
                 (work / 'output/drawing.dxf').write_bytes(b'generic mock DXF')
             elif work.parent.name == 'reconstruction':
                 self.assertEqual(set(p.name for p in (work / 'input').iterdir()), {'drawing.dxf', 'drawing.png'})

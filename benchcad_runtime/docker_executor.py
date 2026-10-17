@@ -213,32 +213,60 @@ class DockerExecutor:
                          (f'\nStopped: {stop}' if stop else ''), timed_out=stop == 'timeout')
 
     def observe(self, deadline: float | None = None) -> tuple[list[str], list[dict]]:
+        import stat
+
         images, records = [], []
-        # Do not recursively walk an agent-controlled directory tree.
-        with os.scandir(self.workspace) as entries:
-            for count, entry in enumerate(entries):
-                if deadline is not None and time.monotonic() >= deadline:
-                    records.append({'rejected': 'observation deadline'})
-                    break
-                if count >= 4096:
-                    records.append({'rejected': 'top-level entry scan limit'})
-                    break
-                if not entry.name.lower().endswith('.png'):
-                    continue
-                if len(records) >= 32:
-                    records.append({'rejected': 'PNG observation count limit'})
-                    break
+        scanned = 0
+        # Two explicit locations only; never recurse into agent-created trees.
+        # All workers have stopped before observation. Validate the output parent
+        # itself before scandir; read_regular also rechecks every file component.
+        for relative_dir in ('', 'output'):
+            if deadline is not None and time.monotonic() >= deadline:
+                records.append({'rejected': 'observation deadline'})
+                return images, records
+            directory = self.workspace / relative_dir
+            if relative_dir:
                 try:
-                    data = read_regular(self.workspace, entry.name, MAX_PNG_BYTES)
-                    digest = sha256(data)
-                    if self.seen_images.get(entry.name) == digest:
-                        continue
-                    path = snapshot_png(data, self.records / 'observations')
-                    self.seen_images[entry.name] = digest
-                    images.append(str(path))
-                    records.append({'name': entry.name, 'sha256': digest, 'snapshot': path.name})
-                except (OSError, ValueError, SyntaxError) as exc:
-                    records.append({'name': entry.name, 'rejected': type(exc).__name__})
+                    info = directory.lstat()
+                    if (stat.S_ISLNK(info.st_mode)
+                            or getattr(info, 'st_file_attributes', 0) & 0x400
+                            or not stat.S_ISDIR(info.st_mode)
+                            or not directory.resolve(strict=True).is_relative_to(self.workspace)):
+                        raise ValueError('Observation directory must be a local directory without links')
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError) as exc:
+                    records.append({'name': relative_dir, 'rejected': type(exc).__name__})
+                    continue
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if deadline is not None and time.monotonic() >= deadline:
+                            records.append({'rejected': 'observation deadline'})
+                            return images, records
+                        if scanned >= 4096:
+                            records.append({'rejected': 'entry scan limit'})
+                            return images, records
+                        scanned += 1
+                        if not entry.name.lower().endswith('.png'):
+                            continue
+                        if len(records) >= 32:
+                            records.append({'rejected': 'PNG observation count limit'})
+                            return images, records
+                        name = f'{relative_dir}/{entry.name}' if relative_dir else entry.name
+                        try:
+                            data = read_regular(self.workspace, name, MAX_PNG_BYTES)
+                            digest = sha256(data)
+                            if self.seen_images.get(name) == digest:
+                                continue
+                            path = snapshot_png(data, self.records / 'observations')
+                            self.seen_images[name] = digest
+                            images.append(str(path))
+                            records.append({'name': name, 'sha256': digest, 'snapshot': path.name})
+                        except (OSError, ValueError, SyntaxError) as exc:
+                            records.append({'name': name, 'rejected': type(exc).__name__})
+            except OSError as exc:
+                records.append({'name': relative_dir or '.', 'rejected': type(exc).__name__})
         return images, records
 
     def execute(self, code: str, timeout: float) -> Execution:
@@ -254,4 +282,11 @@ class DockerExecutor:
         result.images, observations = self.observe(deadline)
         (self.records / execution_id / 'observations.json').write_text(
             json.dumps(observations, indent=2), encoding='utf-8')
+        result.stdout += f'\n[preview feedback] Attached {len(result.images)} new or changed PNG image(s).'
+        if not result.images:
+            result.stdout += (' Save a new or changed PNG at workspace root or directly in output/ '
+                              'to receive image feedback; unchanged images are not attached again.')
+        rejected = [record for record in observations if 'rejected' in record]
+        if rejected:
+            result.stderr += '\n[preview feedback] Rejected observations: ' + json.dumps(rejected)
         return result

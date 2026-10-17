@@ -16,6 +16,22 @@ later execution: `d = Drawing.open()`; both files must still exist. Raw ezdxf
 workflows do not need this state. State is not verified evidence or GT and is
 never transferred to reconstruction.
 
+When the controller supplies `input/template.dxf`, `Drawing()` automatically
+loads its blank sheet instead of creating another frame. An explicit path is
+also accepted: `Drawing(template='input/template.dxf')`. The loader copies the
+single paper layout into model space at unchanged millimetre coordinates,
+preserving title blocks, attributes, layers, fonts, and dimension styles. It
+excludes viewports and non-printing guides. A template with nonempty model space,
+non-mm units, or ambiguous paper layouts is rejected. For an explicitly chosen
+layout, use `load_blank_template(path, layout_name=...)` from
+`benchcad_cadquery.templates` in a raw ezdxf workflow. Existing styles/layers are
+preserved; `Drawing` adds only missing toolkit styles/layers. The `title` argument
+applies only to the fallback frame; update template title-block attributes yourself.
+Inspect and clear unused view placeholders/product fields as appropriate. The
+working state records the template SHA256, not its original local path. The
+template is an optional drawing input and is never transferred separately to
+the reconstruction agent.
+
 `d.projection(name, normal=(0,0,1), xdir=(1,0,0), position=(100,180), scale=1)`
 uses OCP hidden-line removal. The viewer is on the +normal side. Local drawing X
 is xdir projected perpendicular to normal; Y is normal cross X. The origin is
@@ -70,10 +86,13 @@ These dimensions are a generic example, not facts about the current input.
 ## Preview and DXF inspection (both stages)
 
 `render('input/drawing.dxf', 'preview.png')` renders a DXF with ezdxf/PyMuPDF.
-`d.preview('preview.png')` first saves the current drawing. A changed top-level
-PNG is validated and snapshotted outside the writable workspace before it is
+`d.preview('preview.png')` first saves the current drawing. A changed PNG at the
+workspace root or directly in `output/` is validated and snapshotted outside the writable workspace before it is
 returned as feedback. Use PNG only: maximum 12 MiB, 4096 pixels per dimension,
-16 million pixels, one frame; at most 32 changed/invalid observations per call.
+16 million pixels, one frame; at most 32 changed/invalid observations per call
+across both locations. Other nested directories are not scanned.
+The API request including accumulated history and encoded images has a 64 MiB
+limit. Exceeding it stops the run before sending; history is not silently trimmed.
 The standard render is 2100 x 1500 pixels. Submission renders automatically.
 
 ```python

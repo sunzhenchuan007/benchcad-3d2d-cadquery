@@ -23,7 +23,12 @@ Each response must be exactly one nonempty fenced `python` or `submit` block.
 Every decision, including formatting errors/refusals/failed code/submission,
 consumes one round. Transport failures have a separate cap (default 3 total).
 No model fallback. Fresh container/process each execution; files persist within
-one stage. Feedback contains bounded stdout/stderr and changed top-level PNGs.
+one stage. Feedback contains bounded stdout/stderr and changed PNGs at workspace
+root or directly in `output/`. The next request embeds the actual PNG content,
+not just a filename. Feedback reports the attachment count and observation rejections.
+HTTP request bodies are capped at 64 MiB including history and encoded images;
+overflow stops before sending, without silently truncating history. Request
+preparation time is deducted from the stage deadline. This is not a controller RAM quota.
 Optional preview uses `render` or `Drawing.preview`. No automatic per-round CAD
 render is required. Reaching the round/time limit without explicit submit fails.
 
@@ -44,7 +49,8 @@ Default per stage: 1800 seconds, 30 decisions. Per code/validation invocation:
 300 seconds or remaining stage time, 1 CPU, 4096 MiB memory with equal swap
 limit (no additional swap), 128 PIDs. Non-root UID/GID, read-only root, no network,
 ALL capabilities dropped, no-new-privileges, 256 MiB noexec/nosuid/nodev /tmp.
-Only workspace RW and generic package RO are bound; no keys/socket/home/GT.
+Only workspace RW and generic package RO are bound; no keys, Docker socket,
+home directory, or GT are mounted.
 stdout+stderr disk writes capped at 8 MiB per Docker invocation; overflow stops
 the owned container. Total execution deadline is supervised by the controller,
 not merely a Docker-client timeout. Forced removal is confirmed before reading
@@ -58,7 +64,7 @@ Controller-owned episode messages, replies, events, usage, code snapshots,
 bounded stdout/stderr, execution timing/limits/container name, validated PNG
 snapshots named by SHA-256, and frozen manifest hashes. PNG: at most 12 MiB,
 4096 pixels per dimension, 16 million pixels, one frame, up to 32 changed/invalid
-entries per execution; top-level scan capped at 4096 entries. Prior observations
+entries per execution; both locations share a 4096-entry scan cap. Prior observations
 are never read back from writable agent paths. Agent statements, source-state
 metadata, and image contents remain untrusted; hashes establish byte identity,
 not geometric truth. Records stay outside all agent mounts and are local-only.
@@ -73,11 +79,17 @@ Section/collision interfaces are not scored. Expert baseline disabled. No fake
 IoU or overall score; the operator independently evaluates frozen reconstruction
 with the [normalized IoU adapter](../evaluation/README.md). STEP validity is not
 reconstruction correctness. Model HTTP requests share the remaining stage deadline.
+Keep raw IoU and primitive baseline b (best box/sphere/cylinder). The corrected
+value q=clamp((IoU-b)/(1-b),0,1) maps to reconstruction score: 0 at q<=0.90,
+100 at q>=0.99, linearly interpolated between. For b=1, q is 1 only if raw IoU
+is 1, otherwise 0. This is not the deferred expert-drawing baseline or an overall score.
 
 ## 8. Status
 
 Development pilot, not an engineering-complete toolkit or proven hostile-code
-sandbox. Local unit tests mock Docker and perform no API/network/CAD calls.
+sandbox. Default feedback tests mock Docker and make no model API calls.
+On Linux, setting `BENCHCAD_TEST_DOCKER_IMAGE` enables a real Docker feedback
+loop check, still without a model API. Optional template tests require ezdxf.
 Server operator must build the image, run doctor/smoke, validate real filesystem
 deny probes, and run API episodes. Complex CAD geometry, section fidelity,
 annotation quality, logging truth, and model success are not established by

@@ -9,6 +9,11 @@ No claim of an engineering-complete drawing toolkit or
 verified hostile-code isolation. See [agent contract](docs/AGENT_SPEC.md) and
 [Chinese setup](README.zh-CN.md).
 
+For the setup/check/run wrapper see [quick start](docs/QUICKSTART.zh-CN.md).
+For retained requests, replies, execution errors and immutable image snapshots
+see [logging](docs/LOGGING.md). [Operation JSON](docs/OPERATION_LOG.md) is an
+unverified declaration converter; controlled capture and section scoring remain pending.
+
 ## Linux setup
 
 Use Python >=3.11 and a non-root account able to access a **local** Docker daemon
@@ -84,8 +89,9 @@ The API subprocess deadline and HTTP timeout use the remaining stage budget.
 python -m unittest discover -s tests -v
 ```
 
-New pilot unit tests use mocks and local files: no Docker, CAD imports, network,
-or API requests. Existing Windows process-limit tests are preserved. Docker
+Default feedback tests use mocks and local files, without model API requests.
+Set `BENCHCAD_TEST_DOCKER_IMAGE` on Linux to exercise the real Docker feedback loop.
+Optional template tests require ezdxf. Existing Windows process-limit tests are preserved. Docker
 worker geometry, actual filesystem deny probes, and deployment behavior are
 not established by unit tests. Main-view projection/full-section helpers are
 limited; half/offset sections require genuine raw OCP construction. No fake

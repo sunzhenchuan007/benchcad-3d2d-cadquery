@@ -64,6 +64,12 @@ def run_existing_iou(command: list[str], reference: Path, candidate: Path,
     score = result.get("iou")
     if result.get("status") != "computed" or type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1:
         raise ValueError("IoU evaluator did not return a finite computed score")
-    if result.get("metric_version") != "normalized-iou48-mirror-max/1":
+    from .scoring import VERSION, reconstruction_score
+    if result.get("metric_version") != VERSION:
         raise ValueError("Unexpected IoU metric version")
+    expected = reconstruction_score(score, result.get('primitive_baseline'))
+    for key in ('raw_iou', 'corrected_iou', 'reconstruction_score_100'):
+        value = result.get(key)
+        if type(value) not in (int, float) or not math.isfinite(value) or not math.isclose(value, expected[key], abs_tol=1e-10):
+            raise ValueError('Inconsistent reconstruction scoring fields')
     return result

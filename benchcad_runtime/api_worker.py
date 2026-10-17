@@ -2,6 +2,8 @@
 import json
 import math
 import os
+import socket
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -32,9 +34,28 @@ def main():
         result = {k:response.get(k) for k in ('status','output','usage','model')}
     except urllib.error.HTTPError as exc:
         kind = 'transport_error' if exc.code in (408,429) or exc.code>=500 else 'fatal_error'
-        result = {kind:f'OpenAI HTTP {exc.code}; check account/model configuration'}
-    except Exception:
-        result = {'transport_error':'OpenAI network or response failure; details suppressed'}
+        result = {kind:f'API HTTP {exc.code}; request did not produce a usable decision',
+                  'diagnostic': {'failure_kind': 'http_error', 'http_status': exc.code,
+                                 'attribution': 'transport_or_service'}}
+    except Exception as exc:
+        cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(cause, (TimeoutError, socket.timeout)):
+            failure = 'socket_timeout'
+        elif isinstance(cause, socket.gaierror):
+            failure = 'dns_error'
+        elif isinstance(cause, ssl.SSLError):
+            failure = 'tls_error'
+        elif isinstance(cause, json.JSONDecodeError):
+            failure = 'response_json_error'
+        elif isinstance(cause, ValueError) and str(cause) == 'oversize response':
+            failure = 'response_size_limit'
+        elif isinstance(cause, (TypeError, AttributeError)):
+            failure = 'response_schema_error'
+        else:
+            failure = 'network_or_worker_error'
+        result = {'transport_error':f'API failure: {failure}; sensitive details suppressed',
+                  'diagnostic': {'failure_kind': failure, 'error_type': type(cause).__name__,
+                                 'attribution': 'transport_or_protocol'}}
     sys.stdout.write(json.dumps(result))
 
 

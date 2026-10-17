@@ -17,8 +17,22 @@ and uniformly scaled by its own longest bounding-box extent. Reflection is
 applied across XY before the second rotation search. Both search results and
 the selected orientation are retained. This is not arbitrary-angle registration.
 Absolute size and handedness are intentionally removed from this metric;
-volume and sorted-extent ratios are separate diagnostics. No expert-drawing
-baseline division or aggregate engineering score is applied.
+volume and sorted-extent ratios are separate diagnostics.
+
+The final reconstruction score uses the BenchCAD 2 primitive baseline:
+`b = max(IoU(reference, box), IoU(reference, sphere), IoU(reference, cylinder))`
+from the pinned reference context. The corrected value is
+`q = clamp((raw_iou - b) / (1 - b), 0, 1)`. When `b == 1`, the upstream rule
+returns 1 only for raw IoU 1, and 0 otherwise. Then:
+
+* `q <= 0.90`: 0 points.
+* `q >= 0.99`: 100 points.
+* Otherwise: `100 * (q - 0.90) / 0.09` points.
+
+Raw IoU, all primitive baselines, corrected IoU, and the 0..100 reconstruction
+score are all retained. Metric version: `normalized-iou48-primitive-threshold/2`.
+This reconstruction score is not an aggregate engineering score. The separate
+expert-DXF-to-STEP baseline correction remains disabled.
 
 Build an evaluator image separately from the drawing image:
 

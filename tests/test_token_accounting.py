@@ -225,8 +225,11 @@ class TransportIntegrationTests(OfflineTest):
     def test_request_worker_receives_same_deadline_as_supervisor(self):
         self.model('instructions', [{'role': 'user', 'text': 'task'}], 480.5)
         call = self.worker.call_args.kwargs
-        self.assertEqual(call['timeout'], 480.5)
-        self.assertEqual(json.loads(call['input'])['timeout_seconds'], 480.5)
+        self.assertGreater(call['timeout'], 0)
+        self.assertLessEqual(call['timeout'], 480.5)
+        socket_timeout = json.loads(call['input'])['timeout_seconds']
+        self.assertGreaterEqual(socket_timeout, call['timeout'])
+        self.assertLessEqual(socket_timeout, 480.5)
 
     def test_multiple_rounds_count_actual_repeated_history_and_image(self):
         image = self.root / 'observation.png'

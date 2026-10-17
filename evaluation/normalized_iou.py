@@ -11,7 +11,10 @@ import json
 from pathlib import Path
 import sys
 
-VERSION = "normalized-iou48-mirror-max/1"
+if __package__:
+    from .scoring import VERSION, reconstruction_score
+else:
+    from scoring import VERSION, reconstruction_score
 UPSTREAM_COMMIT = "8732095d5cf6f36875d02253cf85f8ab7e41ae78"
 
 
@@ -47,7 +50,13 @@ def evaluate(reference, candidate, vendor):
     scores = [float(proper["iou24"]), float(mirrored["iou24"])]
     if any(not math.isfinite(s) or not 0 <= s <= 1 for s in scores):
         raise ValueError("Invalid IoU result")
+    scoring = reconstruction_score(max(scores), float(context['baseline']))
+    if not math.isclose(scoring['corrected_iou'], float(selected['iou_term']), abs_tol=1e-12):
+        raise ValueError('Primitive correction disagrees with pinned upstream implementation')
     return {"status": "computed", "metric_version": VERSION,
+            **scoring,
+            "baseline_primitives": {k: float(v) for k, v in context['prim'].items()},
+            "baseline_best": context['baseline_best'],
             "upstream_commit": UPSTREAM_COMMIT, "grid": part_metric.GRID,
             "iou": max(scores), "iou24": scores[0], "iou24_reflected": scores[1],
             "reflection_used": reflected, "selected_transform": transform.tolist(),
@@ -64,6 +73,7 @@ def evaluate(reference, candidate, vendor):
             "limitations": ["IoU removes absolute scale and translation",
                             "48 axis-aligned orientations, not arbitrary registration",
                             "Mirror-max IoU ignores chirality",
+                            "Threshold scoring applies to corrected IoU, not raw IoU",
                             "No section, collision, topology or composite score"]}
 
 

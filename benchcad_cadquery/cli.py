@@ -29,7 +29,7 @@ def system_prompt(kind: str, budget: Budget) -> str:
             'Each block is Python executed in a fresh Linux container; only workspace files persist. '
             'A submit block executes once and ends the episode; validation failure has no repair loop. '
             'No explicit submit means no answer. Feedback includes bounded stdout/stderr and changed '
-            'top-level PNG observations. Read TASK.md and TOOLS.md. '
+            'PNG observations saved at workspace root or directly in output/. Read TASK.md and TOOLS.md. '
             f'Save {target}. Scores, ground truth, and expert references are unavailable. '
             + ('Use only the supplied DXF/PNG to infer the solid; there is no source STEP in this stage.'
                if kind == 'reconstruction' else 'Drawing is rendered automatically on submission.'))
@@ -42,6 +42,10 @@ def stage_episode(kind, root, source, args, model, step=None, drawing_bundle=Non
     if kind == 'drawing':
         step = Path(step).absolute()
         write_new(workspace / 'input/model.step', read_regular(step.parent, step.name, MAX_CAD_BYTES))
+        if getattr(args, 'template', None) is not None:
+            template = Path(args.template).absolute()
+            write_new(workspace / 'input/template.dxf',
+                      read_regular(template.parent, template.name, MAX_CAD_BYTES))
     else:
         initial_images = transfer_drawing(Path(drawing_bundle), workspace)
     limits = DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes)
@@ -72,12 +76,18 @@ def summarize(stages: dict, elapsed: float, smoke: bool, model: str | None) -> d
 def run(args, smoke=False):
     start = time.monotonic()
     root = args.run_dir.absolute()
-    root.mkdir(parents=True, exist_ok=False)  # exclusive even if previous run failed
+    root.mkdir(parents=True, exist_ok=False, mode=0o700)  # exclusive and private
     source = source_snapshot(root / 'runtime-source')
     stages = {}
     error = None
     try:
-        if smoke:
+        if args.command == 'reconstruct':
+            _load_encoding()
+            model = OpenAIResponses(args.model, args.max_output_tokens, args.reasoning_effort,
+                                    args.base_url)
+            stages['reconstruction'] = stage_episode('reconstruction', root, source, args, model,
+                                                     drawing_bundle=args.drawing_bundle)
+        elif smoke:
             fixture = root / 'fixture'
             fixture.mkdir()
             limits = DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes)
@@ -94,8 +104,9 @@ def run(args, smoke=False):
             drawing_model = OpenAIResponses(args.model, args.max_output_tokens, args.reasoning_effort,
                                              args.base_url)
             step = args.step
-        stages['drawing'] = stage_episode('drawing', root, source, args, drawing_model, step=step)
-        if args.reconstruct and stages['drawing']['submitted']:
+        if args.command != 'reconstruct':
+            stages['drawing'] = stage_episode('drawing', root, source, args, drawing_model, step=step)
+        if getattr(args, 'reconstruct', False) and stages.get('drawing', {}).get('submitted'):
             if smoke:
                 # Deliberately known fixture dimensions: plumbing replay, NOT an AI reconstruction score.
                 code = "import cadquery as cq\nm=cq.Workplane('XY').box(60,40,8).faces('>Z').workplane().hole(10)\ncq.exporters.export(m, 'output/model.step')"
@@ -110,7 +121,8 @@ def run(args, smoke=False):
     summary = summarize(stages, time.monotonic()-start, smoke, None if smoke else args.model)
     if error:
         summary['controller_error_type'] = error
-    expected = {'drawing', 'reconstruction'} if args.reconstruct else {'drawing'}
+    expected = ({'reconstruction'} if args.command == 'reconstruct' else
+                {'drawing', 'reconstruction'} if args.reconstruct else {'drawing'})
     summary['success'] = not error and set(stages) == expected and all(s['submitted'] for s in stages.values())
     write_new(root / 'summary.json', json.dumps(summary, indent=2).encode('utf-8'))
     print(json.dumps(summary, indent=2))
@@ -148,20 +160,26 @@ def doctor(args):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
-    for command in ('doctor', 'smoke', 'run'):
+    for command in ('doctor', 'smoke', 'run', 'reconstruct'):
         s = sub.add_parser(command)
         s.add_argument('--run-dir', type=Path, required=True)
         s.add_argument('--image', default=None, help='Already built Linux Docker image (no implicit pull)')
         s.add_argument('--config', type=Path, help='Explicit TOML only; no automatic local-config search')
         if command == 'doctor':
             continue
-        s.add_argument('--reconstruct', action=argparse.BooleanOptionalAction, default=command == 'smoke')
+        if command != 'reconstruct':
+            s.add_argument('--reconstruct', action=argparse.BooleanOptionalAction, default=command == 'smoke')
         for flag, typ in (('rounds', int), ('wall-seconds', float), ('execution-seconds', float),
                           ('max-transport-failures', int), ('memory-mib', int), ('cpus', float),
                           ('pids', int), ('log-bytes', int)):
             s.add_argument('--' + flag, type=typ, default=None)
-        if command == 'run':
-            s.add_argument('--step', type=Path, required=True)
+        if command in ('run', 'reconstruct'):
+            if command == 'run':
+                s.add_argument('--step', type=Path, required=True)
+                s.add_argument('--template', type=Path,
+                               help='Curated blank millimetre DXF template, drawing stage only')
+            else:
+                s.add_argument('--drawing-bundle', type=Path, required=True)
             s.add_argument('--model', default=None, help='Exact parent-supplied model ID; no fallback')
             s.add_argument('--base-url', default=None)
             s.add_argument('--max-output-tokens', type=int, default=None)
@@ -193,11 +211,16 @@ def configure(args):
         DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes)
         if args.rounds > 30 or args.wall_seconds > 1800 or args.execution_seconds > 300:
             raise ValueError('Pilot maxima: 30 decisions, 1800 stage seconds, 300 execution seconds')
-    if args.command == 'run':
+    if args.command in ('run', 'reconstruct'):
         if not args.model or not args.model.strip():
             raise ValueError('Supply an exact --model or api.model; there is no default or fallback')
-        if not args.step.is_file() or args.step.is_symlink():
+        if args.command == 'run' and (not args.step.is_file() or args.step.is_symlink()):
             raise ValueError('--step must be a regular STEP file')
+        if args.command == 'run' and args.template is not None:
+            if not args.template.is_file() or args.template.is_symlink():
+                raise ValueError('--template must be a regular DXF template file')
+        if args.command == 'reconstruct' and (not args.drawing_bundle.is_dir() or args.drawing_bundle.is_symlink()):
+            raise ValueError('--drawing-bundle must be a frozen drawing bundle directory')
         args.base_url = args.base_url or os.environ.get('BASE_URL') or os.environ.get('OPENAI_BASE_URL')
     return args
 

@@ -5,6 +5,7 @@ import json
 import math
 import cadquery as cq
 import ezdxf
+from .templates import load_blank_template
 from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
 from OCP.HLRAlgo import HLRAlgo_Projector
 from OCP.gp import gp_Ax2, gp_Pnt, gp_Dir, gp_Pln
@@ -61,20 +62,27 @@ def wire_polygon(wire, x, y, origin, tolerance):
 
 
 class Drawing:
-    def __init__(self, step='input/model.step', path='output/drawing.dxf', title='BenchCAD'):
+    def __init__(self, step='input/model.step', path='output/drawing.dxf', title='BenchCAD', template=None):
         self.step, self.path = Path(step), Path(path)
         self.path.parent.mkdir(parents=True,exist_ok=True)
         self.model = cq.importers.importStep(str(self.step)).val()
-        self.doc = ezdxf.new('R2010')
+        template_path = Path(template) if template is not None else Path('input/template.dxf')
+        use_template = template is not None or template_path.exists()
+        self.doc = load_blank_template(template_path) if use_template else ezdxf.new('R2010')
         self.doc.units = ezdxf.units.MM
-        self.doc.styles.new('BENCHCAD',dxfattribs={'font':'Arial.ttf'})
-        self.doc.dimstyles.new('BC_DIM',dxfattribs={'dimtxt':3.5,'dimasz':2.5,'dimtxsty':'BENCHCAD','dimclrd':7,'dimclre':7,'dimclrt':7})
+        if 'BENCHCAD' not in self.doc.styles:
+            self.doc.styles.new('BENCHCAD',dxfattribs={'font':'Arial.ttf'})
+        if 'BC_DIM' not in self.doc.dimstyles:
+            self.doc.dimstyles.new('BC_DIM',dxfattribs={'dimtxt':3.5,'dimasz':2.5,'dimtxsty':'BENCHCAD','dimclrd':7,'dimclre':7,'dimclrt':7})
         for name,weight in [('FRAME',35),('GEOMETRY',35),('HATCH',18),('DIMENSIONS',25)]:
-            self.doc.layers.new(name,dxfattribs={'color':7,'lineweight':weight})
+            if name not in self.doc.layers:
+                self.doc.layers.new(name,dxfattribs={'color':7,'lineweight':weight})
         m=self.doc.modelspace()
-        m.add_lwpolyline([(10,10),(410,10),(410,287),(10,287)],close=True,dxfattribs={'layer':'FRAME'})
-        m.add_text(title,dxfattribs={'height':4,'style':'BENCHCAD','layer':'FRAME','insert':(270,18)})
+        if not use_template:
+            m.add_lwpolyline([(10,10),(410,10),(410,287),(10,287)],close=True,dxfattribs={'layer':'FRAME'})
+            m.add_text(title,dxfattribs={'height':4,'style':'BENCHCAD','layer':'FRAME','insert':(270,18)})
         self.state={'schema':'benchcad-cadquery-working-state/1','source_sha256':digest(self.step),
+                    'template_sha256':digest(template_path) if use_template else None,
                     'views':[],'dimensions':[], 'section_evidence':'not_verified_agent_writable'}
 
     @classmethod

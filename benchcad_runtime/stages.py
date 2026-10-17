@@ -15,7 +15,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / 'benchcad_cadquery'
 def source_snapshot(destination: Path) -> Path:
     package = destination / 'benchcad_cadquery'
     package.mkdir(parents=True, exist_ok=False)
-    for name in ('__init__.py', 'drawing.py', 'worker.py'):
+    for name in ('__init__.py', 'drawing.py', 'templates.py', 'worker.py'):
         write_new(package / name, read_regular(PACKAGE, name, 1024 * 1024, allow_empty=True), readonly=True)
     return destination.resolve()
 
