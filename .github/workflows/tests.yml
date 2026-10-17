@@ -1,0 +1,21 @@
+name: Offline runtime tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e '.[local-accounting]'
+      - name: Provision public tokenizer vocabulary
+        run: python tools/provision_tokenizer.py --cache-dir "$RUNNER_TEMP/tokenizer-cache"
+      - name: Run tests without API credentials or CAD execution
+        env:
+          TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tokenizer-cache
+        run: python -m unittest discover -s tests -v

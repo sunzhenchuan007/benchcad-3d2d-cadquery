@@ -1,0 +1,7 @@
+cadquery==2.7.0
+ezdxf==1.4.4
+PyMuPDF==1.28.2
+Pillow==11.3.0
+tiktoken==0.12.0
+numpy==2.2.6
+scipy==1.15.3

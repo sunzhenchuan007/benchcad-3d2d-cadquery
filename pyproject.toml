@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "benchcad-3d2d-cadquery"
+version = "0.1.0"
+description = "STEP-to-DXF benchmark with a bounded Python agent and OpenAI Responses transport"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10", "pywin32>=306; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+local-accounting = ["tiktoken==0.12.0"]
+cad = ["cadquery==2.7.0", "ezdxf==1.4.4", "PyMuPDF==1.28.2"]
+
+[project.scripts]
+benchcad = "benchcad_cadquery.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["benchcad_runtime*", "benchcad_cadquery*", "evaluation*"]
+
+[tool.setuptools.package-data]
+benchcad_cadquery = ["*.md"]

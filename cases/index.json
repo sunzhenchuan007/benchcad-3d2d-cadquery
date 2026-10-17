@@ -1,0 +1,59 @@
+{
+  "schema": "benchcad-source-index/1",
+  "cases": [
+    {
+      "case_id": "case_001",
+      "title": "Cylinder body",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_001/sources/raw/01_缸体.STEP",
+      "sha256": "8d77d7ac7ef2ddb50b2622c9347653a6981ad4db7d45226bce6fe54cb04943d8",
+      "bytes": 376779,
+      "status": "index_only_not_bundled"
+    },
+    {
+      "case_id": "case_013",
+      "title": "Valve body",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_013/sources/done_szc/13_model.step",
+      "sha256": "0ad459f5ab3cc4e810bbfbb535a6913dbe48025a8639d73a72466a0ab511fba6",
+      "bytes": 280052,
+      "status": "index_only_not_bundled"
+    },
+    {
+      "case_id": "case_015",
+      "title": "Moving jaw",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_015/sources/raw/15_动鄂.step",
+      "sha256": "3c9a7eef9e8073983dccbb37ad564d1a63c904a606c853e1b35c59b2c3e668e4",
+      "bytes": 709936,
+      "status": "index_only_not_bundled"
+    },
+    {
+      "case_id": "case_084",
+      "title": "Lofted bosses",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_084/sources/放样多凸台step.STEP",
+      "sha256": "bae1b90d8a526ad678d93b1dea11db8d1bf32b320628f26ab65c9259cbc83334",
+      "bytes": 46627,
+      "status": "index_only_not_bundled"
+    },
+    {
+      "case_id": "case_086",
+      "title": "Housing",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_086/sources/housing.step",
+      "sha256": "03164e22100c63ed11fc30979252f486d9bb77466245c42d60cd7463be0544a7",
+      "bytes": 20338782,
+      "status": "index_only_not_bundled"
+    },
+    {
+      "case_id": "case_088",
+      "title": "PP18.5A",
+      "source_repository": "sunzhenchuan007/benchcad-3d2d",
+      "source_path": "cases/case_088/sources/provenance/raw/PP18.5A.STEP",
+      "sha256": "44c55d02c363063bd6fbf9abe65566a6c56a39ee69f637f78c31c39e55b41720",
+      "bytes": 552481,
+      "status": "index_only_not_bundled"
+    }
+  ]
+}
