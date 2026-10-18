@@ -21,9 +21,11 @@ There is no expert drawing, ground truth, or score feedback.
 
 Each response is exactly one nonempty `python` or `submit` fenced code block.
 The contents are executable Python. A normal block returns execution feedback;
-a submit block executes once and ends the episode. Explicitly save the DXF before
+a submit block executes Python and requests validation. Explicitly save the DXF before
 submission. The controller checks the DXF and renders the final PNG automatically.
-Do not submit a filename or prose. No submission repair loop is provided.
+Do not submit a filename or prose. Failed submit code or rejected artifacts return feedback.
+You may repair and submit again within the SAME remaining rounds and time.
+Only successful validation ends submission; budgets never reset.
 
 Example last response (only after the file has already been saved):
 

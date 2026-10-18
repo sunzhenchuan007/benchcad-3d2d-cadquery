@@ -11,8 +11,9 @@ modeling. Save a valid positive-volume solid or solids as `output/model.step`.
 Do not search for a source model. Read TOOLS.md for allowed libraries and examples.
 
 Each response is exactly one nonempty `python` or `submit` fenced Python block.
-A submit block executes once and ends the episode. Export the STEP before or
-inside that block. Final validation has no model repair loop. Files persist but
+A submit block executes Python and requests validation. Export the STEP before or
+inside that block. Failed submit code or rejected artifacts return feedback; repair and resubmit within
+the SAME remaining rounds/time. Only successful validation ends submission. Files persist but
 Python variables do not. No explicit submit means no answer.
 
 Default limits: 30 decision responses, 1800 seconds for this stage, 300 seconds

@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from benchcad_runtime.errors import SubmissionRejected
 from benchcad_runtime.episode import Budget, Execution, ReplayModel, Reply, TransportError, run_episode, parse_action
 
 
@@ -52,16 +53,41 @@ class EpisodeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_action("```python\npass\n```\n```submit\npass\n```")
 
-    def test_submit_failure_has_no_repair_or_fallback(self):
-        result, executor = self.run_case(["```submit\nraise Exception()\n```", "```submit\npass\n```"], Executor(1))
-        self.assertEqual(result["ended_by"], "submit_failed")
-        self.assertEqual(len(executor.calls), 1)
+    def test_submit_failure_returns_feedback_and_allows_repair(self):
+        class Recovering(Executor):
+            def execute(self, source, timeout):
+                self.calls.append(source)
+                return Execution(1 if len(self.calls) == 1 else 0, stderr="assertion failed")
+        result, executor = self.run_case(["```submit\nraise Exception()\n```", "```submit\npass\n```"], Recovering())
+        self.assertEqual(result["ended_by"], "submitted")
+        self.assertEqual(len(executor.calls), 2)
+        transcript = json.loads((Path(self.temp.name)/"logs/transcript.json").read_text())
+        self.assertIn('assertion failed', transcript[2]['text'])
+        self.assertIn('Submission not accepted', transcript[2]['text'])
 
-    def test_finalizer_failure_is_not_success(self):
+    def test_last_round_failed_submit_has_no_fallback(self):
+        result, executor = self.run_case(["```submit\npass\n```"], Executor(1), Budget(rounds=1))
+        self.assertEqual(result['ended_by'], 'round_limit')
+        self.assertEqual(len(executor.calls), 1)
+        self.assertIsNone(result['bundle'])
+
+    def test_known_validation_rejection_can_be_repaired(self):
+        attempts = []
+        def finalize(**kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise SubmissionRejected('empty DXF')
+            return 'frozen'
+        result, _ = self.run_case(["```submit\npass\n```"]*2, finalizer=finalize)
+        self.assertTrue(result['submitted'])
+        self.assertEqual(result['decision_rounds'], 2)
+        self.assertEqual(result['events'][1]['event'], 'submission_rejected')
+
+    def test_unknown_validator_failure_is_infrastructure(self):
         def fail(**kwargs):
-            raise ValueError("empty DXF")
+            raise RuntimeError("renderer unavailable")
         result, _ = self.run_case(["```submit\npass\n```"], finalizer=fail)
-        self.assertEqual(result["ended_by"], "submit_failed")
+        self.assertEqual(result["ended_by"], "infrastructure_failed")
         self.assertIsNone(result["bundle"])
 
     def test_transport_failure_does_not_consume_decision(self):
@@ -94,7 +120,7 @@ class EpisodeTests(unittest.TestCase):
             self.assertEqual(len(executor.calls), 0)
 
     def test_execution_failure_is_returned_to_next_decision(self):
-        result, executor = self.run_case(["```python\nraise Exception()\n```", "```submit\npass\n```"], Executor(1))
+        result, executor = self.run_case(["```python\nraise Exception()\n```", "```submit\npass\n```"], Executor(1), Budget(rounds=2))
         self.assertEqual(result["decision_rounds"], 2)
         self.assertEqual(len(executor.calls), 2)
 
@@ -107,6 +133,47 @@ class EpisodeTests(unittest.TestCase):
         self.assertEqual(result["code_executions"], 0)
         self.assertEqual(result["decision_rounds"], 1)
         self.assertEqual(result["events"][0]["event"], "executor_failed")
+
+    def test_resume_preserves_context_and_cumulative_budgets(self):
+        first, _ = self.run_case(["```submit\npass\n```"], Executor(1), Budget(rounds=1))
+        first.update(ended_by='submit_failed', decision_rounds=27, code_executions=26,
+                     model_call_attempts=27, wall_seconds=730, budget=vars(Budget()))
+        transcript = json.loads((Path(self.temp.name)/"logs/transcript.json").read_text())
+        seen = []
+        def model(system, messages, timeout):
+            seen.append((messages[:], timeout))
+            return Reply("```submit\npass\n```")
+        resumed = run_episode(model, Executor(), lambda **kw: 'frozen', 'unused',
+            Path(self.temp.name)/'continued', resume={'episode': first, 'messages': transcript,
+            'feedback': {'role': 'user', 'text': 'original submission error', 'images': []}, 'parent': 'prior'})
+        self.assertTrue(resumed['submitted'])
+        self.assertEqual(resumed['decision_rounds'], 28)
+        self.assertEqual(resumed['code_executions'], 27)
+        self.assertEqual(resumed['model_call_attempts'], 28)
+        self.assertLessEqual(seen[0][1], 1070)
+        self.assertGreaterEqual(resumed['wall_seconds'], 730)
+        self.assertEqual(seen[0][0][-1]['text'], 'original submission error')
+        self.assertEqual(seen[0][0][0], transcript[0])
+        self.assertEqual(len(resumed['usage_records']), len(first['usage_records'])+1)
+
+    def test_resume_cannot_reset_budget(self):
+        first, _ = self.run_case(["```submit\npass\n```"], Executor(1), Budget(rounds=1))
+        first['ended_by'] = 'submit_failed'
+        with self.assertRaises(ValueError):
+            run_episode(ReplayModel([]), Executor(), lambda **kw: 'frozen', 'task',
+                Path(self.temp.name)/'invalid', resume={'episode': first, 'messages': [], 'feedback': {}})
+
+    def test_failed_submit_at_deadline_does_not_request_more_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            now = [0]
+            class TimedExecutor:
+                def execute(self, code, timeout):
+                    now[0] = 30
+                    return Execution(124, timed_out=True)
+            result = run_episode(ReplayModel(["```submit\npass\n```"]), TimedExecutor(),
+                lambda **kw: 'frozen', 'task', Path(tmp)/'logs', Budget(wall_seconds=30), clock=lambda: now[0])
+            self.assertEqual(result['ended_by'], 'wall_timeout')
+            self.assertEqual(result['model_call_attempts'], 1)
 
 
 if __name__ == "__main__":

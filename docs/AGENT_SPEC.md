@@ -37,8 +37,9 @@ render is required. Reaching the round/time limit without explicit submit fails.
 Drawing requires `output/drawing.dxf`: clean ezdxf audit, nonempty geometry,
 trusted worker render to PNG, then frozen DXF+PNG+hash manifest. Reconstruction
 requires `output/model.step`: valid positive-volume solids, then frozen STEP+
-manifest. Submit Python runs once; finalization failure ends the stage without
-model repair. Files must be bounded, regular, single-link, non-symlink files
+manifest. Submit Python runs once per attempt. Failed submit code and recognized artifact
+rejections return feedback for repair within the SAME remaining rounds/time.
+Successful validation freezes the bundle; unknown infrastructure failures stop the stage. Files must be bounded, regular, single-link, non-symlink files
 inside the expected workspace path. A copied submission is validated in a fresh
 clean worker; it is never repaired. Finalized bundles are never overwritten.
 Agent-authored working state is excluded from freeze/transfer and is not GT.

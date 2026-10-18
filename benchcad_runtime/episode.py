@@ -14,6 +14,7 @@ import time
 
 from .accounting import summarize_usage
 from .journal import Journal
+from .errors import SubmissionRejected
 from .local_accounting import (LocalAccountingError, summarize_local_usage,
                                validate_instructions, validate_rates)
 
@@ -93,19 +94,32 @@ class ReplayModel:
 def run_episode(model: Callable, executor: Executor, finalizer: Callable,
                 task: str, log_dir: Path, budget: Budget = Budget(),
                 clock: Callable = time.monotonic, system_prompt: str | None = None,
-                rates: dict | None = None, initial_images: list[str] | None = None) -> dict:
+                rates: dict | None = None, initial_images: list[str] | None = None,
+                resume: dict | None = None) -> dict:
     """A transport must honor timeout; each episode starts with fresh context.
 
-    Final submit code consumes a decision round and executes once. A failed
-    submit or a failed finalizer ends this episode with no model repair loop.
+    Failed submit code and explicitly rejected artifacts return feedback within
+    the original budget. Unexpected executor/validator failures stop the episode.
+    Resume is controller-owned state, never data supplied by the agent.
     """
     if system_prompt is not None:
         validate_instructions(system_prompt)
     validate_rates(rates, (getattr(model, "model", None),))
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=False)
-    start = clock()
-    messages = [{"role": "user", "text": task, "images": list(initial_images or [])}]
+    previous = resume['episode'] if resume else None
+    if previous is not None:
+        if (previous['budget'] != vars(budget) or previous['ended_by'] != 'submit_failed'
+                or previous['submitted'] or previous['bundle'] is not None
+                or not 0 < previous['decision_rounds'] < budget.rounds
+                or not 0 <= previous['wall_seconds'] < budget.wall_seconds
+                or previous['transport_failures'] >= budget.max_transport_failures):
+            raise ValueError('Resume requires a failed submission with unchanged, unexhausted budgets')
+        if not resume.get('messages') or resume.get('feedback', {}).get('role') != 'user':
+            raise ValueError('Resume requires the original transcript and pending execution feedback')
+    start = clock() - (previous['wall_seconds'] if previous else 0)
+    messages = (json.loads(json.dumps(resume['messages'])) if resume else
+                [{"role": "user", "text": task, "images": list(initial_images or [])}])
     system = system_prompt if system_prompt is not None else (
         f"Create an engineering drawing from input/model.step. Maximum {budget.rounds} decision rounds. "
         f"Total wall budget: {budget.wall_seconds:g} seconds; each Python execution: "
@@ -115,13 +129,19 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
         "Feedback contains stdout, stderr and changed PNG images at workspace root or directly in output/. "
         "Read TOOLS.md for available helpers. Save output/drawing.dxf. "
         "A submit block is Python executed once, then the controller validates and freezes the drawing. "
-        "Submit failure ends the task. No explicit submit means no answer, even if files exist. "
+        "Failed submit code or rejected artifacts return feedback for repair within the same budgets. "
+        "Only successful validation ends submission. No explicit submit means no answer, even if files exist. "
         "Scores and expert references are never available during this episode."
     )
     (log_dir / "system.txt").write_text(system, encoding="utf-8")
     journal = Journal(log_dir / 'journal.jsonl', clock, start)
     journal.write('episode_started', budget=vars(budget), system=system)
-    journal.write('message', message=messages[0])
+    if resume:
+        journal.write('episode_resumed', prior_decision_rounds=previous['decision_rounds'],
+                      prior_wall_seconds=previous['wall_seconds'],
+                      parent=resume.get('parent'), policy_changed=True)
+    for message in messages:
+        journal.write('message', message=message)
 
     def add_message(message):
         messages.append(message)
@@ -130,6 +150,15 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
     api_seconds = execution_seconds = finalization_seconds = 0.0
     records, usages, local_usages = [], [], []
     rounds = calls = failures = executions = 0
+    if resume:
+        api_seconds = previous['timing']['api_seconds']
+        execution_seconds = previous['timing']['execution_seconds']
+        finalization_seconds = previous['timing']['finalization_seconds']
+        records = list(previous['events'])
+        usages, local_usages = list(previous['usage_records']), list(previous['local_usage_records'])
+        rounds, calls = previous['decision_rounds'], previous['model_call_attempts']
+        failures, executions = previous['transport_failures'], previous['code_executions']
+        add_message(resume['feedback'])
     ended = "round_limit"
     bundle = None
     while rounds < budget.rounds:
@@ -224,7 +253,7 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
         records.append({"round": rounds, "event": action, "exit_code": result.exit_code,
                         "timed_out": result.timed_out, "image_count": len(result.images)})
         if action == "submit":
-            ended = "submit_failed"
+            rejection = 'Submission code failed; no artifact was accepted.'
             if result.exit_code == 0:
                 left = budget.wall_seconds - (clock() - start)
                 if left <= 0:
@@ -235,14 +264,25 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
                     try:
                         bundle = finalizer(timeout=left)
                         ended = "submitted" if clock()-start <= budget.wall_seconds else "wall_timeout"
+                    except SubmissionRejected as exc:
+                        rejection = str(exc)
+                        records.append({"round": rounds, "event": "submission_rejected", "error": rejection})
+                    except TimeoutError:
+                        ended = "wall_timeout"
                     except Exception as exc:
-                        records.append({"round": rounds, "event": "finalization_failed", "error": str(exc)})
+                        ended = "infrastructure_failed"
+                        records.append({"round": rounds, "event": "finalization_failed",
+                                        "error_type": type(exc).__name__})
                     finally:
                         duration = clock() - finalization_start
                         finalization_seconds += duration
                         journal.write('finalization_finished', round=rounds,
                                       duration_seconds=duration, ended_by=ended)
-            break
+            if ended in ('submitted', 'wall_timeout', 'infrastructure_failed'):
+                break
+            journal.write('submission_rejected', round=rounds, error=rejection)
+            result.stderr += '\nSubmission not accepted: ' + rejection + (
+                '\nYou may repair and submit again within the remaining rounds/time; budgets do not reset.')
         text = (f"Round {rounds}/{budget.rounds}; remaining {budget.rounds-rounds}. "
                 f"Remaining seconds: {max(0, budget.wall_seconds - (clock()-start)):.1f}. "
                 f"Exit code {result.exit_code}; timed_out={result.timed_out}\n"
@@ -263,6 +303,11 @@ def run_episode(model: Callable, executor: Executor, finalizer: Callable,
               "usage_records": usages, "usage_complete": provider_summary["usage_complete"],
               "bundle": bundle, "events": records,
               "formal_score": False, "actual_fee": None}
+    if resume:
+        result['continuation'] = {'parent': resume.get('parent'), 'policy_changed': True,
+                                  'prior_decision_rounds': previous['decision_rounds'],
+                                  'prior_wall_seconds': previous['wall_seconds'],
+                                  'paused_time_excluded': True}
     (log_dir / "episode.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     (log_dir / "transcript.json").write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
     journal.write('episode_finished', ended_by=ended, decision_rounds=rounds,

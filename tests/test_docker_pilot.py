@@ -318,7 +318,7 @@ class StageTests(PilotTest):
         (workspace / 'output/drawing.dxf').write_bytes(b'mock-dxf')
         (workspace / 'output/drawing.state.json').write_text('untrusted')
         def validate(command, timeout, directory):
-            clean = stage / 'finalize/workspace'
+            clean = next((stage / 'finalize').glob('*/workspace'))
             self.assertEqual(set(p.name for p in clean.iterdir()), {'drawing.dxf'})
             self.assertEqual(command, ['-I', '/opt/benchcad/benchcad_cadquery/worker.py', 'validate-drawing'])
             self.assertLessEqual(timeout, 10)
@@ -340,7 +340,7 @@ class StageTests(PilotTest):
         workspace = prepare_workspace(stage, 'reconstruction')
         (workspace / 'output/model.step').write_bytes(b'mock-step')
         def validate(*args):
-            clean = stage / 'finalize/workspace'
+            clean = next((stage / 'finalize').glob('*/workspace'))
             self.assertEqual(set(p.name for p in clean.iterdir()), {'model.step'})
             (clean / 'validation.json').write_text('{"kind":"reconstruction"}')
             return Execution(0)
@@ -356,9 +356,36 @@ class StageTests(PilotTest):
         (workspace / 'output/drawing.dxf').write_bytes(b'malformed')
         with patch('benchcad_runtime.stages.DockerExecutor') as executor:
             executor.return_value.run_command.return_value = Execution(1)
-            with self.assertRaises(ValueError):
+            with self.assertRaises(RuntimeError):
                 StageFinalizer('drawing', workspace, stage, self.source, 'pilot:test', DockerLimits())(timeout=10)
         self.assertFalse((stage / 'bundle').exists())
+
+    def test_validation_retry_uses_separate_clean_workspace(self):
+        from benchcad_runtime.errors import SubmissionRejected
+        stage = self.root / 'drawing'
+        workspace = prepare_workspace(stage, 'drawing')
+        (workspace / 'output/drawing.dxf').write_bytes(b'malformed')
+        attempts = []
+        def validate(command, timeout, directory):
+            clean = directory.parents[1] / 'workspace'
+            attempts.append(clean)
+            if len(attempts) == 1:
+                (clean / 'rejection.json').write_text('{"kind":"drawing","reason":"Cannot parse DXF"}')
+                return Execution(2)
+            (clean / 'drawing.png').write_bytes(png())
+            (clean / 'validation.json').write_text('{"kind":"drawing"}')
+            return Execution(0)
+        with patch('benchcad_runtime.stages.DockerExecutor') as executor:
+            executor.return_value.run_command.side_effect = validate
+            finalize = StageFinalizer('drawing', workspace, stage, self.source, 'pilot:test', DockerLimits())
+            with self.assertRaises(SubmissionRejected):
+                finalize(timeout=10)
+            self.assertFalse((stage/'bundle').exists())
+            (workspace/'output/drawing.dxf').write_bytes(b'corrected')
+            bundle = Path(finalize(timeout=10))
+            self.assertNotEqual(*attempts)
+            self.assertEqual((attempts[0]/'drawing.dxf').read_bytes(), b'malformed')
+            self.assertEqual((bundle/'drawing.dxf').read_bytes(), b'corrected')
 
     def test_source_snapshot_is_explicit_allowlist(self):
         self.assertEqual(set(p.relative_to(self.source).as_posix() for p in self.source.rglob('*') if p.is_file()),

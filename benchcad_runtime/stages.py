@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import time
+import uuid
 
 from .artifacts import (MAX_CAD_BYTES, MAX_PNG_BYTES, read_regular, sha256,
                         snapshot_png, validate_png, write_new)
 from .docker_executor import DockerExecutor, DockerLimits
+from .errors import SubmissionRejected
 
 PACKAGE = Path(__file__).resolve().parent.parent / 'benchcad_cadquery'
 
@@ -73,10 +75,14 @@ class StageFinalizer:
         if bundle.exists():
             raise FileExistsError('A finalized bundle is never overwritten')
         filename = 'drawing.dxf' if self.kind == 'drawing' else 'model.step'
-        data = read_regular(self.workspace, 'output/' + filename, MAX_CAD_BYTES)
+        try:
+            data = read_regular(self.workspace, 'output/' + filename, MAX_CAD_BYTES)
+        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+            raise SubmissionRejected('Expected a nonempty, regular output/' + filename
+                                     + ' within the artifact size limit; links are not allowed.') from exc
         # Only the copied submission is visible to trusted validation, not the
         # agent's scripts, Python modules, state, logs, or original model.
-        validation = self.stage / 'finalize'
+        validation = self.stage / 'finalize' / uuid.uuid4().hex
         clean = validation / 'workspace'
         clean.mkdir(parents=True, exist_ok=False)
         write_new(clean / filename, data)
@@ -85,8 +91,13 @@ class StageFinalizer:
                                       'validate-' + self.kind],
                                      min(self.execution_seconds, timeout - (time.monotonic() - start)),
                                      validation / 'records' / 'validate')
+        if result.exit_code == 2 and not result.timed_out:
+            rejection = json.loads(read_regular(clean, 'rejection.json', 100000))
+            if rejection.get('kind') != self.kind or not isinstance(rejection.get('reason'), str):
+                raise RuntimeError('Invalid rejection record from validator')
+            raise SubmissionRejected(rejection['reason'])
         if result.exit_code:
-            raise ValueError('Trusted validation/render failed; see finalizer records')
+            raise RuntimeError('Validator failed without a recognized artifact rejection; see finalizer records')
         if read_regular(clean, filename, MAX_CAD_BYTES) != data:
             raise ValueError('Validator modified the submitted artifact')
         validation_record = json.loads(read_regular(clean, 'validation.json', 100000))

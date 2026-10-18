@@ -27,7 +27,7 @@ def system_prompt(kind: str, budget: Budget) -> str:
             f'and {budget.execution_seconds:g} seconds per execution, limited by remaining stage time. '
             'Reply with exactly one nonempty fenced python or submit block and no other text. '
             'Each block is Python executed in a fresh Linux container; only workspace files persist. '
-            'A submit block executes once and ends the episode; validation failure has no repair loop. '
+            'A submit block executes Python and requests validation. Failed submit code or rejected artifacts return feedback for repair within the SAME remaining rounds/time. Only successful validation ends submission. '
             'No explicit submit means no answer. Feedback includes bounded stdout/stderr and changed '
             'PNG observations saved at workspace root or directly in output/. Read TASK.md and TOOLS.md. '
             f'Save {target}. Scores, ground truth, and expert references are unavailable. '
