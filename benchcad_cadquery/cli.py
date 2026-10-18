@@ -18,6 +18,8 @@ from benchcad_runtime.openai_api import OpenAIResponses
 from benchcad_runtime.stages import (PACKAGE, StageFinalizer, prepare_workspace,
                                      source_snapshot, transfer_drawing)
 from evaluation.interfaces import pending_metrics
+from evaluation.pipeline import complete_evaluation
+from benchcad_runtime.report import save_summary_and_report
 
 
 def system_prompt(kind: str, budget: Budget) -> str:
@@ -74,6 +76,22 @@ def summarize(stages: dict, elapsed: float, smoke: bool, model: str | None) -> d
 
 
 def run(args, smoke=False):
+    if args.iou_vendor is not None:
+        # Fail before a paid API request when the local evaluator image is missing.
+        import subprocess
+        import tempfile
+        if not args.evaluator_image or args.evaluator_image.startswith('-') or any(c.isspace() for c in args.evaluator_image):
+            raise ValueError('An explicit local evaluator image name is required')
+        with tempfile.TemporaryDirectory(prefix='benchcad-eval-preflight-') as config:
+            try:
+                checked = subprocess.run(['docker', '--config', config, '--host', 'unix:///var/run/docker.sock',
+                                          'image', 'inspect', args.evaluator_image],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         env=DockerExecutor.environment(), timeout=20)
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError('Evaluator image preflight timed out') from exc
+        if checked.returncode:
+            raise ValueError('Evaluator image is missing; run setup before paid evaluation')
     start = time.monotonic()
     root = args.run_dir.absolute()
     root.mkdir(parents=True, exist_ok=False, mode=0o700)  # exclusive and private
@@ -124,9 +142,29 @@ def run(args, smoke=False):
     expected = ({'reconstruction'} if args.command == 'reconstruct' else
                 {'drawing', 'reconstruction'} if args.reconstruct else {'drawing'})
     summary['success'] = not error and set(stages) == expected and all(s['submitted'] for s in stages.values())
-    write_new(root / 'summary.json', json.dumps(summary, indent=2).encode('utf-8'))
+    reference = args.reference_step if args.command == 'reconstruct' else locals().get('step')
+    complete_evaluation(summary, root, reference, args.iou_vendor, args.evaluator_image,
+                        DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes),
+                        args.evaluation_seconds)
+    save_summary_and_report(root, summary)
     print(json.dumps(summary, indent=2))
     return 0 if summary['success'] else 1
+
+
+def evaluate_existing(args):
+    root = args.run_dir.absolute()
+    if (root / 'evaluated-summary.json').exists() or (root / 'evaluation-report.html').exists():
+        raise FileExistsError('Existing evaluation/report is never overwritten')
+    summary = json.loads(read_regular(root, 'summary.json', 2*1024*1024))
+    # Resolve the frozen candidate from this run, never from a stale absolute path.
+    if summary['stages'].get('reconstruction', {}).get('submitted'):
+        summary['stages']['reconstruction']['bundle'] = str(root / 'reconstruction/bundle')
+    complete_evaluation(summary, root, args.reference_step, args.iou_vendor, args.evaluator_image,
+                        DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes),
+                        args.evaluation_seconds)
+    save_summary_and_report(root, summary, existing_run=True)
+    print(json.dumps(summary['metrics'], indent=2))
+    return 0 if summary['metrics']['reconstruction_iou']['status'] == 'computed' else 1
 
 
 def doctor(args):
@@ -160,14 +198,18 @@ def doctor(args):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
-    for command in ('doctor', 'smoke', 'run', 'reconstruct'):
+    for command in ('doctor', 'smoke', 'run', 'reconstruct', 'evaluate'):
         s = sub.add_parser(command)
         s.add_argument('--run-dir', type=Path, required=True)
         s.add_argument('--image', default=None, help='Already built Linux Docker image (no implicit pull)')
         s.add_argument('--config', type=Path, help='Explicit TOML only; no automatic local-config search')
         if command == 'doctor':
             continue
-        if command != 'reconstruct':
+        s.add_argument('--iou-vendor', type=Path, help='Pinned BenchCAD 2 checkout; enables automatic scoring')
+        s.add_argument('--evaluator-image', default=None)
+        s.add_argument('--evaluation-seconds', type=float, default=None)
+        s.add_argument('--reference-step', type=Path, help='Evaluator-only reference for reconstruct/evaluate')
+        if command in ('run', 'smoke'):
             s.add_argument('--reconstruct', action=argparse.BooleanOptionalAction, default=command == 'smoke')
         for flag, typ in (('rounds', int), ('wall-seconds', float), ('execution-seconds', float),
                           ('max-transport-failures', int), ('memory-mib', int), ('cpus', float),
@@ -201,12 +243,30 @@ def configure(args):
     sections = {'executor': {'image': 'benchcad-cadquery:local', 'memory_mib': 4096,
                             'cpus': 1, 'pids': 128, 'log_bytes': 8*1024*1024},
                 'budget': {'rounds': 30, 'wall_seconds': 1800, 'execution_seconds': 300, 'max_transport_failures': 3},
-                'api': {'model': '', 'base_url': None, 'max_output_tokens': 8192, 'reasoning_effort': None}}
+                'api': {'model': '', 'base_url': None, 'max_output_tokens': 8192, 'reasoning_effort': None},
+                'evaluation': {'iou_vendor': None, 'evaluator_image': 'benchcad-cadquery:evaluator',
+                               'evaluation_seconds': 300, 'reference_step': None}}
     for section, defaults in sections.items():
         for key, value in defaults.items():
             if getattr(args, key, None) is None:
                 setattr(args, key, config.get(section, {}).get(key, value))
     if args.command != 'doctor':
+        import math
+        if (not math.isfinite(args.evaluation_seconds) or not 0 < args.evaluation_seconds <= 600):
+            raise ValueError('Evaluation budget must be between 0 and 600 seconds')
+        for key in ('iou_vendor', 'reference_step'):
+            if getattr(args, key, None) is not None:
+                setattr(args, key, Path(getattr(args, key)))
+        if args.iou_vendor is not None:
+            if not (args.iou_vendor / 'envs/common/part_metric.py').is_file():
+                raise ValueError('Missing pinned BenchCAD 2 metric source')
+            if args.command == 'run' and not args.reconstruct:
+                raise ValueError('Automatic IoU requires --reconstruct')
+            if args.command in ('reconstruct', 'evaluate') and (
+                    args.reference_step is None or not args.reference_step.is_file() or args.reference_step.is_symlink()):
+                raise ValueError('Supply --reference-step for evaluator only')
+        if args.command == 'evaluate' and args.iou_vendor is None:
+            raise ValueError('Supply --iou-vendor to evaluate a completed run')
         Budget(args.rounds, args.wall_seconds, args.execution_seconds, args.max_transport_failures)
         DockerLimits(args.memory_mib, args.cpus, args.pids, args.log_bytes)
         if args.rounds > 30 or args.wall_seconds > 1800 or args.execution_seconds > 300:
@@ -231,7 +291,11 @@ def main(argv=None):
         args = configure(p.parse_args(argv))
         if not sys.platform.startswith('linux'):
             p.error('Execution is supported on Linux only. Windows is for development/unit tests.')
-        return doctor(args) if args.command == 'doctor' else run(args, smoke=args.command == 'smoke')
+        if args.command == 'doctor':
+            return doctor(args)
+        if args.command == 'evaluate':
+            return evaluate_existing(args)
+        return run(args, smoke=args.command == 'smoke')
     except (ValueError, OSError) as exc:
         # Generic message avoids exposing paths or external diagnostic payloads.
         p.exit(2, f'Configuration/filesystem failure ({type(exc).__name__}); check arguments and use a new run directory.\n')

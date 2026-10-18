@@ -14,6 +14,7 @@ import sys
 if __package__:
     from .scoring import VERSION, reconstruction_score
 else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from scoring import VERSION, reconstruction_score
 UPSTREAM_COMMIT = "8732095d5cf6f36875d02253cf85f8ab7e41ae78"
 

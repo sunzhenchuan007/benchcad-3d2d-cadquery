@@ -41,12 +41,13 @@ class BootstrapTests(unittest.TestCase):
                 patch.object(bootstrap, 'invoke') as call:
             self.assertEqual(bootstrap.main(['setup']), 0)
         commands = [list(map(str, c.args[0])) for c in call.call_args_list]
-        self.assertEqual(len(commands), 5)
+        self.assertEqual(len(commands), 6)
         self.assertIn('venv', commands[1])
         self.assertIn('pip', commands[2])
         self.assertIn('tools/provision_tokenizer.py', commands[3])
         self.assertEqual(commands[4][-3:], ['-t', bootstrap.IMAGE, 'sandbox'])
-        for command in (commands[0], commands[4]):
+        self.assertEqual(commands[5][-3:], ['-t', 'benchcad-cadquery:evaluator', 'evaluation'])
+        for command in (commands[0], commands[4], commands[5]):
             self.assertIn('unix:///var/run/docker.sock', command)
             self.assertIn('--config', command)
         for c in call.call_args_list:

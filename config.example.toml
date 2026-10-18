@@ -21,3 +21,11 @@ memory_mib = 4096
 cpus = 1
 pids = 128
 log_bytes = 8388608
+
+[evaluation]
+# Set once to enable automatic scoring and reporting after --reconstruct.
+# Use the pinned upstream checkout described in evaluation/README.md.
+# iou_vendor = "/path/to/benchcad-2-main"
+evaluator_image = "benchcad-cadquery:evaluator"
+evaluation_seconds = 300
+# reference_step is only needed for standalone reconstruct/evaluate commands.

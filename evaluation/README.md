@@ -54,3 +54,20 @@ model scores, run the same adapter with the reference file as both inputs.
 That identity control must produce 1.0. Geometry, dependency, timeout, and memory
 errors are infrastructure failures; do not replace them with a fabricated zero.
 The adapter refuses to overwrite existing results.
+
+## Automatic closeout
+
+Pass `--reconstruct --iou-vendor /path/to/pinned-checkout` to the main run command.
+The controller automatically validates an identity control, evaluates the frozen
+reconstruction in a separate credential-free Docker container, merges the result
+into `summary.json`, and writes `report.html`. `tools/benchcad.py setup` now builds
+the separate evaluator image. The vendor checkout is a controller-side prerequisite;
+it is never supplied to either model stage. Without a vendor path, the report
+explicitly says `evaluation_not_configured`.
+
+Both identity and candidate evaluations share `--evaluation-seconds` (default 300).
+Infrastructure errors produce a null score with failure status, not a zero score.
+For a previously finished run, `benchcad evaluate --run-dir ... --reference-step ...
+--iou-vendor ...` adds evaluation records and an evaluated summary/report without
+overwriting the original summary or calling the model API. Existing evaluation
+directories are never silently reused.

@@ -26,6 +26,7 @@ neither keys nor the daemon socket. No home, GT, or whole-repository mount.
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[local-accounting]'
 docker build -t benchcad-cadquery:local sandbox
+docker build --build-arg CAD_IMAGE=benchcad-cadquery:local -t benchcad-cadquery:evaluator evaluation
 export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
 .venv/bin/python tools/provision_tokenizer.py --cache-dir "$TIKTOKEN_CACHE_DIR"
 .venv/bin/python -m benchcad_cadquery.cli doctor --run-dir .runs/doctor-001 --image benchcad-cadquery:local
@@ -34,7 +35,7 @@ export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
 
 Install/build/provision may use the network. Episodes load a checksum-verified
 offline tokenizer; they never download vocabulary. The image also caches that
-vocabulary at build time. Image build context is only `sandbox/`. Direct
+vocabulary at build time. Image build contexts are only `sandbox/` and `evaluation/`. Direct
 dependencies are pinned there; transitive dependencies and base-image digest
 are not a reproducibility lock. Keep the resulting image ID with deployment records.
 The controller does not read Docker login configuration or select remote contexts.
@@ -58,6 +59,7 @@ are consulted. The operator must supply the exact model ID; there is no fallback
 .venv/bin/python -m benchcad_cadquery.cli run \
   --step /data/input/model.step --run-dir .runs/run-001 \
   --model gpt-6-sol --image benchcad-cadquery:local --reconstruct \
+  --iou-vendor /data/tools/benchcad-2-main \
   --rounds 30 --wall-seconds 1800 --execution-seconds 300 --memory-mib 4096 --cpus 1
 ```
 
@@ -69,7 +71,7 @@ Each stage gets a fresh context, workspace, container sequence, and budget.
 
 Results: `summary.json`, per-stage `episode/`, `executions/`, `finalize/`, and
 `bundle/manifest.json`. Only successful explicit submission creates a bundle;
-validation has no model repair loop. A bundle contains DXF+PNG or STEP plus its
+failed submit code or recognized artifact rejections return feedback within the original budget. A bundle contains DXF+PNG or STEP plus its
 manifest. Working state stays untrusted in the original workspace. Reconstruction
 receives only copies of the frozen DXF+PNG and generic TASK/TOOLS documents; its
 initial image references the frozen PNG. Records and code/image snapshots are
@@ -78,9 +80,11 @@ not mounted. Never reuse a run directory or modify a finalized bundle.
 Main usage metric: **local_visible_text**, an unverified tokenizer proxy for
 visible input/output text. It excludes image, hidden reasoning, hidden
 instruction, framing, and billing tokens. Provider usage is diagnostic only;
-`actual_fee` and all unimplemented scores stay null. Evaluate the frozen
-reconstructed STEP independently with `evaluation/normalized_iou.py` and the
-external pinned geometry modules described in [evaluation setup](evaluation/README.md).
+`actual_fee` and all unimplemented scores stay null. With `--iou-vendor`, the controller
+automatically evaluates the frozen reconstruction in a separate Docker environment,
+merges the score into `summary.json`, and writes `report.html` (including failed runs).
+Without this configuration it explicitly reports `evaluation_not_configured`.
+Prepare the external pinned geometry modules described in [evaluation setup](evaluation/README.md).
 The API subprocess deadline and HTTP timeout use the remaining stage budget.
 
 ## Local checks and limitations

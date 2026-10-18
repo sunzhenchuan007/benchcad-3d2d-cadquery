@@ -67,3 +67,14 @@ stdout 与 stderr 在每次底层进程调用中共享大小上限，默认合�
 ## 保密与发布
 
 原始日志可能含输入几何、模型生成的路径和其他项目信息，属于私有运行数据。`.runs`、本地配置、Key、会话记录不自动发布；对外只提供人工审查过的汇总和已授权产物。分享整个目录前必须另做内容与元数据审查。
+
+## 自动评测与报告
+
+配置 `--iou-vendor` 后，主控制程序在重建阶段结束后自动衔接独立评测。
+`evaluation/identity.json` 保存同模型对照，`evaluation/candidate.json` 保存最终评分证据；
+独立 Docker 的执行日志在 `evaluation/records/`。参考 STEP 只进入可信评测工作目录。
+`summary.json` 中的 Metric 状态和 `report.html` 使用同一份结果；已评分的零分明确标为 `computed`，
+未配置评测为 `not_evaluated`，未成功提交为 `blocked`，评测程序错误为 `failed`。
+后两种情况下分数为 null。生成阶段成功而评测失败时，`generation_success` 为 true，整体 `success` 为 false。
+`evaluation_seconds` 单独记录评测时间，`total_wall_seconds` 包含评测；评测不消耗模型决策轮次。
+这些文件都属于私有运行记录，特别是含参考 STEP 的 `evaluation/workspace/`，不得直接发布。

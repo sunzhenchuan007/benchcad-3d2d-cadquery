@@ -61,6 +61,11 @@ def run_existing_iou(command: list[str], reference: Path, candidate: Path,
     subprocess.run([*command, str(reference), str(candidate), "--output", str(output)],
                    check=True, timeout=timeout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     result = json.loads(output.read_text(encoding="utf-8"))
+    validate_iou_result(result)
+    return result
+
+
+def validate_iou_result(result: dict) -> None:
     score = result.get("iou")
     if result.get("status") != "computed" or type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1:
         raise ValueError("IoU evaluator did not return a finite computed score")
@@ -72,4 +77,3 @@ def run_existing_iou(command: list[str], reference: Path, candidate: Path,
         value = result.get(key)
         if type(value) not in (int, float) or not math.isfinite(value) or not math.isclose(value, expected[key], abs_tol=1e-10):
             raise ValueError('Inconsistent reconstruction scoring fields')
-    return result

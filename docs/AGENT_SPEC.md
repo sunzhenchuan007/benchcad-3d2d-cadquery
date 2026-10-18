@@ -77,8 +77,10 @@ an unverified model-tokenizer proxy. Recounts visible instructions/history on
 each request. Image, hidden reasoning/instruction, framing, caching, and total
 billed tokens are unknown. Provider usage is diagnostic only; actual fee null.
 Section/collision interfaces are not scored. Expert baseline disabled. No fake
-IoU or overall score; the operator independently evaluates frozen reconstruction
-with the [normalized IoU adapter](../evaluation/README.md). STEP validity is not
+IoU or overall score. With `--iou-vendor`, the controller automatically evaluates frozen
+reconstruction in a separate Docker environment using the [normalized IoU adapter](../evaluation/README.md),
+then merges the result into the summary and generates an offline report.
+Without evaluation configuration the metric explicitly remains unscored. STEP validity is not
 reconstruction correctness. Model HTTP requests share the remaining stage deadline.
 Keep raw IoU and primitive baseline b (best box/sphere/cylinder). The corrected
 value q=clamp((IoU-b)/(1-b),0,1) maps to reconstruction score: 0 at q<=0.90,

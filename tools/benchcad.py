@@ -58,6 +58,8 @@ def perform(action, extra, docker, clean_env):
         invoke([PYTHON, '-m', 'pip', 'install', '-e', '.[local-accounting]'], env)
         invoke([PYTHON, 'tools/provision_tokenizer.py', '--cache-dir', env['TIKTOKEN_CACHE_DIR']], env)
         invoke([*docker, 'build', '-t', IMAGE, 'sandbox'], env)
+        invoke([*docker, 'build', '--build-arg', 'CAD_IMAGE=' + IMAGE,
+                '-t', 'benchcad-cadquery:evaluator', 'evaluation'], env)
         print('Environment prepared. Next: python3 tools/benchcad.py check')
         return 0
     if not PYTHON.exists():

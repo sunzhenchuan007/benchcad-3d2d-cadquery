@@ -15,6 +15,7 @@ Linux 主机需要 Python≥3.11、非 root 账户及本机 Docker 权限。
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[local-accounting]'
 docker build -t benchcad-cadquery:local sandbox
+docker build --build-arg CAD_IMAGE=benchcad-cadquery:local -t benchcad-cadquery:evaluator evaluation
 export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
 .venv/bin/python tools/provision_tokenizer.py --cache-dir "$TIKTOKEN_CACHE_DIR"
 .venv/bin/python -m benchcad_cadquery.cli doctor --run-dir .runs/doctor-001
@@ -31,7 +32,8 @@ export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
 ```sh
 .venv/bin/python -m benchcad_cadquery.cli run \
   --step /data/input/model.step --run-dir .runs/run-001 \
-  --model gpt-6-sol --image benchcad-cadquery:local --reconstruct
+  --model gpt-6-sol --image benchcad-cadquery:local --reconstruct \
+  --iou-vendor /data/tools/benchcad-2-main
 ```
 
 默认每阶段最多 30 个决策响应、1800 秒，每次代码执行最多 300 秒，
@@ -44,7 +46,7 @@ export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
 冻结包只包含 DXF+PNG 或 STEP 及哈希 manifest；工作状态明确不可信。
 主计量为 `local_visible_text`，不是完整计费 token；provider usage 仅诊断，
 `actual_fee=null`。专家基线关闭，剖视/碰撞未评分，IoU 在独立评分环境运行。
-算法与安装方法见 [归一化 IoU](evaluation/README.md)。API 请求受剩余阶段时间限制。
+配置 `--iou-vendor` 后，程序会自动衔接独立评测、合入评分并生成 `report.html`；不再需要人工分别执行评分和汇总。未配置时明确显示未启用评测；失败不伪造零分。算法与依赖准备见 [归一化 IoU](evaluation/README.md)。API 请求受剩余阶段时间限制。
 
 离线测试：`python -m unittest discover -s tests -v`。本次单测不能证明
 Docker 几何运行成功或文件访问隔离；服务端需实际 smoke 和 deny probes。
