@@ -34,7 +34,7 @@ python3 tools/benchcad.py check
 read -rsp 'API Key: ' OPENAI_API_KEY; echo
 export OPENAI_API_KEY
 python3 tools/benchcad.py run \
-  --step /data/cases/case_013/model.step \
+  --step examples/case13/model.step \
   --model YOUR_MODEL_ID \
   --base-url https://api.openai.com/v1 \
   --run-dir .runs/case013-first \
@@ -43,7 +43,7 @@ python3 tools/benchcad.py run \
 unset OPENAI_API_KEY
 ```
 
-将 STEP、模型 ID、网址和 `--iou-vendor` 路径替换为自己的配置。评测代码需准备为 [evaluation/README.md](../evaluation/README.md) 指定版本的 BenchCAD 2 checkout；该第三方代码不随本仓库发布，也不会传给 AI。接口必须兼容 Responses API，模型须支持图片输入；不会自动替换模型。只有这一步会调用付费 API。Key 留在可信的控制程序侧，不传给 CAD 容器。
+仓库只附带一个公开输入示例 `examples/case13/model.step`，其余 case 自行提供。通用任务说明与示例分别存放，见 [任务定义](../benchcad_cadquery/tasks/README.md) 和 [Case13](../examples/case13/README.md)。将 STEP、模型 ID、网址和 `--iou-vendor` 路径替换为自己的配置。评测代码需准备为 [evaluation/README.md](../evaluation/README.md) 指定版本的 BenchCAD 2 checkout；该第三方代码不随本仓库发布，也不会传给 AI。接口必须兼容 Responses API，模型须支持图片输入；不会自动替换模型。只有这一步会调用付费 API。Key 留在可信的控制程序侧，不传给 CAD 容器。
 
 `--run-dir` 必须是尚不存在的目录，防止覆盖记录。`--reconstruct` 表示出图成功后启动新的重建上下文；重建 Agent 只拿到冻结的 DXF、PNG 和工具说明，不拿原始 STEP 或出图对话。省略它则只运行出图。
 
@@ -70,7 +70,7 @@ unset OPENAI_API_KEY
 ```bash
 .venv/bin/python -m benchcad_cadquery.cli evaluate \
   --run-dir .runs/case013-first \
-  --reference-step /data/cases/case_013/model.step \
+  --reference-step examples/case13/model.step \
   --iou-vendor /data/tools/benchcad-2-main
 ```
 

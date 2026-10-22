@@ -1,0 +1,23 @@
+{
+  "schema": "benchcad-public-example/1",
+  "case_id": "case_013",
+  "title": "Valve body",
+  "task": "drawing",
+  "input": {
+    "path": "model.step",
+    "bytes": 279985,
+    "sha256": "f4d68745f8dd468703a2e9cf4c024b8fa18a204c457c187a54543ca6c2715e09"
+  },
+  "source": {
+    "repository": "sunzhenchuan007/benchcad-3d2d",
+    "path": "cases/case_013/sources/done_szc/13_model.step",
+    "sha256": "0ad459f5ab3cc4e810bbfbb535a6913dbe48025a8639d73a72466a0ab511fba6"
+  },
+  "publication": {
+    "header": "neutralized",
+    "data_section": "unchanged",
+    "data_section_sha256": "4700526e5d415ea5172e9119c11fe863cfc74a0c6f23151d87094cc53c5f5e70",
+    "includes_expert_data": false,
+    "includes_run_logs": false
+  }
+}

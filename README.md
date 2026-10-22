@@ -128,5 +128,17 @@ Docker shares the host kernel and is not a proof of adversarial isolation.
 Parser/audit success and immutable controller snapshots are useful records,
 not proof that arbitrary model statements or geometry are correct.
 
-`cases/index.json` is provenance only; source CAD and private GT are not bundled.
+## Tasks and the public example
+
+- [Task definitions](benchcad_cadquery/tasks/README.md) contain the generic drawing
+  and reconstruction instructions loaded by the controller, independent of any case.
+- [Case13](examples/case13/README.md) is the single public example: its input STEP,
+  source/checksum manifest and run instructions. It contains no expert JSON,
+  reference drawing, model answer or historical run logs.
+- `config.example.toml` defines shared runtime settings; examples do not duplicate
+  these budgets. Use `--step examples/case13/model.step` to select this input.
+
+The former `cases/index.json` was a six-case provenance list, not a task definition
+or a runnable dataset. It is no longer included in the current tree. Private
+datasets remain external and are selected explicitly with `--step`.
 Run artifacts are local-only and must not be committed or published wholesale.

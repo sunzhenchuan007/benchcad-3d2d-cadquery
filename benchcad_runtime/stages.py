@@ -29,7 +29,7 @@ def prepare_workspace(stage: Path, kind: str) -> Path:
     workspace.mkdir(parents=True, exist_ok=False)
     (workspace / 'input').mkdir()
     (workspace / 'output').mkdir()
-    write_new(workspace / 'TASK.md', read_regular(PACKAGE, kind.upper() + '_TASK.md', 100000))
+    write_new(workspace / 'TASK.md', read_regular(PACKAGE, 'tasks/' + kind + '.md', 100000))
     guide = read_regular(PACKAGE, 'TOOLS.md', 100000).decode('utf-8')
     if kind == 'reconstruction':
         # Keep one canonical guide, but do not prompt reconstruction with drawing

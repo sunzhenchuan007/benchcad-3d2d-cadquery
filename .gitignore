@@ -35,3 +35,5 @@ credentials*
 *.npz
 /AGENTS.md
 /config.local.toml
+# The single explicitly approved public input; generated CAD stays ignored.
+!/examples/case13/model.step

@@ -20,4 +20,4 @@ benchcad = "benchcad_cadquery.cli:main"
 include = ["benchcad_runtime*", "benchcad_cadquery*", "evaluation*"]
 
 [tool.setuptools.package-data]
-benchcad_cadquery = ["*.md"]
+benchcad_cadquery = ["*.md", "tasks/*.md"]

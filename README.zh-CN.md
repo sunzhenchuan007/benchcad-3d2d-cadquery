@@ -9,6 +9,9 @@
 
 简化入口见[部署、验收与运行](docs/QUICKSTART.zh-CN.md)，
 完整日志的保存与分析见[日志说明](docs/LOGGING.md)。
+通用出图、重建要求独立放在[任务定义](benchcad_cadquery/tasks/README.md)；
+仓库只附带一个[真实 Case13 输入示例](examples/case13/README.md)，不包含专家答案和运行日志。
+运行时用 `--step examples/case13/model.step` 选择它；参数沿用 `config.example.toml`。
 [操作 JSON 转换](docs/OPERATION_LOG.md)目前仍是未核实的声明转换；可信操作捕获与剖切评分尚未接通。
 
 Linux 主机需要 Python≥3.11、非 root 账户及本机 Docker 权限。

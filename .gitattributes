@@ -1,0 +1,2 @@
+# Preserve the reviewed STEP bytes and manifest checksum across platforms.
+/examples/case13/model.step -text
