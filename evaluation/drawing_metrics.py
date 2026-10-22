@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-VERSION = 'drawing-product/1'
+VERSION = 'drawing-product/3'
 MAJOR = {'projection', 'full_section', 'half_section'}
 LOCAL = {'local_section', 'detail'}
 

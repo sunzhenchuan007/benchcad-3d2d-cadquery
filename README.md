@@ -6,7 +6,7 @@ completion callback, upload-only retries, publication boundary and same-host lay
 
 A minimal **development pilot**: a custom Responses API agent draws a STEP in
 Linux Docker; an optional independent agent reconstructs from the frozen DXF and
-PNG. The tested agent is an API model, not Codex CLI. Windows is for development
+PNG. The tested agent is an API model, not Codex CLI. [Chinese metric design](docs/METRICS.zh-CN.md) explains all three scores and their limits. Windows is for development
 and offline unit tests only. [Three metrics](docs/METRICS.md) report reconstruction
 consistency, expert preference and annotation collisions in 0..1; their product
 is the final score when all three are available. Expert-drawing baseline correction

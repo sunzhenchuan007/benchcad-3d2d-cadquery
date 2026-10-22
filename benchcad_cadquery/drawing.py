@@ -210,7 +210,7 @@ class Drawing:
         return render(self.path,path)
 
 
-def render(dxf,path):
+def render(dxf,path, *, preserve_colors=False):
     """Preview model-space geometry, or a single blank mm paper-space sheet."""
     from ezdxf.addons.drawing import Frontend,RenderContext,layout,config
     from ezdxf.addons.drawing.pymupdf import PyMuPdfBackend
@@ -223,7 +223,7 @@ def render(dxf,path):
         doc=load_blank_template(dxf)
     backend=PyMuPdfBackend()
     settings=config.Configuration(background_policy=config.BackgroundPolicy.WHITE,
-                                  color_policy=config.ColorPolicy.BLACK)
+                                  color_policy=config.ColorPolicy.COLOR if preserve_colors else config.ColorPolicy.BLACK)
     Frontend(RenderContext(doc),backend,config=settings).draw_layout(doc.modelspace(),finalize=True)
     pdf=backend.get_pdf_bytes(layout.Page(420,297,layout.Units.mm,margins=layout.Margins.all(5)))
     with fitz.open(stream=pdf,filetype='pdf') as document:

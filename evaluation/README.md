@@ -30,11 +30,11 @@ from the pinned reference context. The corrected value is
 returns 1 only for raw IoU 1, and 0 otherwise. Then:
 
 * `q <= 0.90`: 0 points.
-* `q >= 0.99`: 100 points.
-* Otherwise: `100 * (q - 0.90) / 0.09` points.
+* `q >= 0.995`: 1 point.
+* Otherwise: `(q - 0.90) / 0.095` points.
 
-Raw IoU, all primitive baselines, corrected IoU, and the 0..100 reconstruction
-score are all retained. Metric version: `normalized-iou48-primitive-threshold/2`.
+Raw IoU, all primitive baselines, corrected IoU, and the 0..1 reconstruction
+score are all retained (`reconstruction_score_100` remains a compatibility field). Metric version: `normalized-iou48-primitive-threshold/3`.
 This reconstruction score is not an aggregate engineering score. The separate
 expert-DXF-to-STEP baseline correction remains disabled.
 

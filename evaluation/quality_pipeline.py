@@ -3,7 +3,7 @@ from pathlib import Path
 import json
 import time
 
-from benchcad_runtime.artifacts import MAX_CAD_BYTES, read_regular, sha256, write_new
+from benchcad_runtime.artifacts import MAX_CAD_BYTES, MAX_PNG_BYTES, read_regular, sha256, write_new
 from benchcad_runtime.docker_executor import DockerExecutor
 from .drawing_metrics import aggregate, unit
 
@@ -13,7 +13,7 @@ def evaluate_quality(root, reference, expert, image, limits, timeout=300):
     workspace=stage/'workspace';workspace.mkdir()
     source=stage/'source';source.mkdir()
     repo=Path(__file__).resolve().parent.parent
-    files={'evaluation':['__init__.py','drawing_metrics.py','collisions.py','view_evidence.py','quality_worker.py'],
+    files={'evaluation':['__init__.py','drawing_metrics.py','collisions.py','ink_geometry.py','view_evidence.py','quality_worker.py'],
            'benchcad_cadquery':['__init__.py','drawing.py','templates.py','operations.py']}
     for package,names in files.items():
         (source/package).mkdir()
@@ -46,6 +46,10 @@ def evaluate_quality(root, reference, expert, image, limits, timeout=300):
         if scores[name]['status']=='computed':unit(scores[name]['score'])
         elif scores[name]['score'] is not None:raise ValueError('Uncomputed metric must be null')
     write_new(stage/'quality.json',payload,readonly=True)
+    if (workspace/'drawing-collision-check.dxf').exists():
+        write_new(stage/'drawing-collision-check.dxf',read_regular(workspace,'drawing-collision-check.dxf',MAX_CAD_BYTES),readonly=True)
+    if (workspace/'drawing-collision-check.png').exists():
+        write_new(stage/'drawing-collision-check.png',read_regular(workspace,'drawing-collision-check.png',MAX_PNG_BYTES),readonly=True)
     if (workspace/'sections.json').exists():
         write_new(stage/'sections.json',read_regular(workspace,'sections.json',4*1024*1024),readonly=True)
     return scores

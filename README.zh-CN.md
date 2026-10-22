@@ -12,7 +12,9 @@
 通用出图、重建要求独立放在[任务定义](benchcad_cadquery/tasks/README.md)；
 仓库只附带一个[真实 Case13 输入示例](examples/case13/README.md)，不包含专家答案和运行日志。
 运行时用 `--step examples/case13/model.step` 选择它；参数沿用 `config.example.toml`。
-[操作 JSON 转换](docs/OPERATION_LOG.md)目前仍是未核实的声明转换；可信操作捕获与剖切评分尚未接通。
+[旧操作 JSON 转换](docs/OPERATION_LOG.md)仅提供未核实声明。当前工具日志在提交时冻结，经最终几何核验后用于专家评分；复杂视图和 SW 原生证据仍有覆盖限制。
+
+[三项 Metric 中文设计](docs/METRICS.zh-CN.md)说明重建一致性、专家偏好和文字碰撞如何相乘，以及边缘接触、扣分和缺失证据处理。可下载 [HTML 讲解](docs/METRICS.zh-CN.html) 离线阅读。
 
 Linux 主机需要 Python≥3.11、非 root 账户及本机 Docker 权限。
 控制器只需 Pillow/tiktoken；CAD 依赖安装在 worker 镜像中。

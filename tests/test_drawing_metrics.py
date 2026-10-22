@@ -88,38 +88,100 @@ class CollisionTests(unittest.TestCase):
         self.doc.saveas(self.path);return score_dxf(self.path)
     def text(self,content='TEXT',position=(0,0),rotation=0):
         self.m.add_text(content,dxfattribs={'height':3,'insert':position,'rotation':rotation})
-    def test_text_pair_and_ignored_model_line(self):
-        self.text();self.text(position=(.5,0));self.m.add_line((-10,1),(20,1))
-        r=self.score();self.assertEqual(r['pair_count'],1);self.assertEqual(r['score'],.95)
+    def test_text_pair_and_annotation_line_contacts(self):
+        self.text();self.text(position=(.5,0));self.doc.layers.new('ANNO_DIM');self.m.add_line((-10,1),(20,1),dxfattribs={'layer':'ANNO_DIM'})
+        r=self.score();self.assertEqual(r['pair_count'],3);self.assertEqual(r['score'],.85)
     def test_separated_rotated_text(self):
         self.text(rotation=90);self.text(position=(20,0),rotation=90)
         self.assertEqual(self.score()['pair_count'],0)
     def test_dimension_line_crossing_another_text(self):
         self.m.add_linear_dim(base=(0,5),p1=(0,0),p2=(20,0)).render()
-        self.text('OTHER',position=(1,4))
-        self.assertEqual(self.score()['pair_count'],1)
+        self.text('X',position=(1,4))
+        self.assertEqual(self.score()['counts']['text_annotation'],1)
     def test_twenty_pairs_floor(self):
         for _ in range(8):self.text()
         self.assertEqual(self.score()['pair_count'],28)
         self.assertEqual(self.score()['score'],0)
-    def test_view_geometry_and_frame_text_ignored(self):
+    def test_view_and_frame_text_are_both_checked(self):
         self.doc.layers.new('FRAME');self.doc.blocks.new('VIEW_A').add_text('TEXT',dxfattribs={'height':3})
         self.m.add_blockref('VIEW_A',(0,0));self.text()
         self.m.add_text('TEXT',dxfattribs={'height':3,'layer':'FRAME'})
-        self.assertEqual(self.score()['pair_count'],0)
-    def test_one_dimension_internal_geometry_not_counted(self):
+        self.assertEqual(self.score()['pair_count'],3)
+    def test_normal_dimension_gap_has_no_contact(self):
         self.m.add_linear_dim(base=(0,5),p1=(0,0),p2=(10,0)).render()
         self.assertEqual(self.score()['pair_count'],0)
     def test_two_dimensions_count_pair_once(self):
         for _ in range(2):self.m.add_linear_dim(base=(0,5),p1=(0,0),p2=(10,0)).render()
         self.assertEqual(self.score()['pair_count'],1)
-    def test_unknown_leader_is_not_silent_full_score(self):
+    def test_leader_without_text_has_no_penalty(self):
         self.m.add_leader([(0,0),(1,1),(2,1)])
-        self.assertIsNone(self.score()['score'])
-    def test_exploded_annotation_lines_are_unscored(self):
+        self.assertEqual(self.score()['score'],1)
+    def test_annotation_line_without_text_has_no_penalty(self):
         self.doc.layers.new('ANNO_DIM')
         self.m.add_line((0,0),(10,0),dxfattribs={'layer':'ANNO_DIM'})
-        self.assertIsNone(self.score()['score'])
+        self.assertEqual(self.score()['score'],1)
+
+    def test_view_edges_deduplicate_and_annotation_contact_counts(self):
+        block=self.doc.blocks.new('VIEW_A')
+        for y in (.5,1.,1.5):block.add_line((-2,y),(20,y))
+        self.m.add_blockref('VIEW_A',(0,0))
+        self.text('TEXT')
+        self.doc.layers.new('ANNO_SECTION')
+        self.m.add_line((-3,1),(30,1),dxfattribs={'layer':'ANNO_SECTION'})
+        r=self.score()
+        self.assertEqual(r['counts'],{'text_text':0,'text_view':1,'text_annotation':1,'text_geometry':0})
+        self.assertEqual(r['score'],.9)
+
+    def test_text_in_empty_view_interior_is_not_collision(self):
+        b=self.doc.blocks.new('VIEW_A')
+        b.add_lwpolyline([(-10,-10),(30,-10),(30,20),(-10,20)],close=True)
+        self.m.add_blockref('VIEW_A',(0,0));self.text()
+        self.assertEqual(self.score()['pair_count'],0)
+
+    def test_check_copy_red_and_original_unchanged(self):
+        from evaluation.collisions import score_dxf
+        import ezdxf
+        self.text();self.text(position=(.5,0));self.doc.saveas(self.path)
+        original=self.path.read_bytes();check=self.path.with_name('check.dxf')
+        r=score_dxf(self.path,check_path=check)
+        self.assertEqual(self.path.read_bytes(),original)
+        marked=[e for e in ezdxf.readfile(check).modelspace() if e.dxf.layer=='BC_COLLISION_CHECK']
+        self.assertEqual(len(marked),2)
+        self.assertTrue(all(e.dxf.color==1 for e in marked))
+        with self.assertRaises(ValueError):score_dxf(self.path,check_path=self.path)
+        with self.assertRaises(ValueError):score_dxf(self.path,check_path=check)
+
+    def test_unknown_line_role_still_checked(self):
+        self.text();self.m.add_line((-5,1),(20,1))
+        self.assertEqual(self.score()['counts']['text_geometry'],1)
+
+    def test_empty_attributes_not_missing_text(self):
+        self.m.add_text('',dxfattribs={'height':3})
+        self.assertEqual(self.score()['score'],1)
+
+    def test_original_red_centerline_is_black_in_check_copy(self):
+        from evaluation.collisions import score_dxf
+        import ezdxf
+        self.doc.layers.new('GEOM_CENTER',dxfattribs={'color':1})
+        center=self.m.add_line((30,-5),(30,20),dxfattribs={'layer':'GEOM_CENTER'})
+        center.dxf.true_color=0xFF0000
+        block=self.doc.blocks.new('VIEW_COLOR_TEST')
+        edge=block.add_line((40,0),(40,20),dxfattribs={'color':1})
+        edge.dxf.true_color=0xFF0000
+        self.m.add_blockref('VIEW_COLOR_TEST',(0,0))
+        self.text();self.text(position=(.5,0));self.doc.saveas(self.path)
+        before=self.path.read_bytes();check=self.path.with_name('monochrome-check.dxf')
+        result=score_dxf(self.path,check_path=check)
+        reopened=ezdxf.readfile(check)
+        for handle in (center.dxf.handle,edge.dxf.handle):
+            entity=reopened.entitydb[handle]
+            self.assertEqual(entity.dxf.color,7)
+            self.assertFalse(entity.dxf.hasattr('true_color'))
+        marks=[e for e in reopened.modelspace() if e.dxf.layer=='BC_COLLISION_CHECK']
+        self.assertTrue(marks)
+        self.assertTrue(all(e.dxf.color==1 for e in marks))
+        self.assertEqual(result['counts'],{'text_text':1,'text_view':0,'text_annotation':0,'text_geometry':0})
+        self.assertEqual(self.path.read_bytes(),before)
 
 
 class GeometryEvidence(unittest.TestCase):

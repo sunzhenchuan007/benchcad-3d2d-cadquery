@@ -214,7 +214,7 @@ def evaluate_existing(args):
 
 def score_existing(args):
     """No model calls, preserve prior scores/reports, run drawing metrics once."""
-    from evaluation.interfaces import validate_iou_result
+    from evaluation.interfaces import upgrade_iou_result
     from benchcad_runtime.artifacts import sha256
     root=args.run_dir.absolute()
     if (root/'scored-summary.json').exists() or (root/'scoring-report.html').exists():
@@ -222,7 +222,7 @@ def score_existing(args):
     name='evaluated-summary.json' if (root/'evaluated-summary.json').exists() else 'summary.json'
     summary=json.loads(read_regular(root,name,2*1024*1024))
     if (root/'evaluation/candidate.json').exists():
-        metric=json.loads(read_regular(root,'evaluation/candidate.json',1024*1024));validate_iou_result(metric)
+        metric=upgrade_iou_result(json.loads(read_regular(root,'evaluation/candidate.json',1024*1024)))
         final_step=read_regular(root,'reconstruction/bundle/model.step',MAX_CAD_BYTES)
         if sha256(final_step)!=metric['candidate']['sha256']:
             raise ValueError('Existing IoU does not match frozen reconstruction')

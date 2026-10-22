@@ -2,7 +2,7 @@
 import math
 
 
-VERSION = 'normalized-iou48-primitive-threshold/2'
+VERSION = 'normalized-iou48-primitive-threshold/3'
 
 
 def reconstruction_score(raw_iou, baseline):
@@ -15,12 +15,13 @@ def reconstruction_score(raw_iou, baseline):
         corrected = min(1.0, max(0.0, (raw_iou - baseline) / (1 - baseline)))
     if corrected <= .90:
         score = 0.0
-    elif corrected >= .99:
+    elif corrected >= .995:
         score = 100.0
     else:
-        score = 100 * (corrected - .90) / (.99 - .90)
+        score = 100 * (corrected - .90) / (.995 - .90)
     return {'raw_iou': float(raw_iou), 'primitive_baseline': float(baseline),
-            'corrected_iou': corrected, 'reconstruction_score_100': score,
+            'corrected_iou': corrected, 'score': score / 100, 'score_scale': '0..1',
+            'reconstruction_score_100': score,
             'score_policy': {'input': 'corrected_iou', 'zero_at_or_below': .90,
-                             'full_at_or_above': .99, 'interpolation': 'linear',
+                             'full_at_or_above': .995, 'interpolation': 'linear',
                              'baseline_one_rule': 'one_only_if_raw_iou_is_one'}}

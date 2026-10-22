@@ -139,7 +139,9 @@ an unverified model-tokenizer proxy. Recounts visible instructions/history on
 each request. Image, hidden reasoning/instruction, framing, caching, and total
 billed tokens are unknown. Provider usage is diagnostic only; actual fee null.
 Expert-drawing baseline correction remains disabled. [Three-component scoring](METRICS.md)
-adds expert preference and annotation collisions; missing evidence leaves total null.
+adds expert preference and rendered-text contact checks, including boundary touching.
+Annotation/centre/cutting lines touching text count; line/line contacts do not.
+Missing evidence or required fonts leaves the affected score and total null.
 With `--iou-vendor`, the controller automatically evaluates frozen
 reconstruction in a separate Docker environment using the [normalized IoU adapter](../evaluation/README.md),
 then merges the result into the summary and generates an offline report.
@@ -147,7 +149,7 @@ Without evaluation configuration the metric explicitly remains unscored. STEP va
 reconstruction correctness. Model HTTP requests share the remaining stage deadline.
 Keep raw IoU and primitive baseline b (best box/sphere/cylinder). The corrected
 value q=clamp((IoU-b)/(1-b),0,1) maps to reconstruction score: 0 at q<=0.90,
-1 at q>=0.99, linearly interpolated between. For b=1, q is 1 only if raw IoU
+1 at q>=0.995, linearly interpolated between. For b=1, q is 1 only if raw IoU
 is 1, otherwise 0. Final score multiplies this by expert preference and collision,
 also in 0..1. This does not enable the deferred expert-drawing baseline.
 

@@ -1,6 +1,8 @@
 # Three scores and their product
 
-Policy: `drawing-product/1`. All three component scores and the final score
+[中文设计讲解](METRICS.zh-CN.md) · [Offline HTML](METRICS.zh-CN.html)
+
+Policy: `drawing-product/3`. All three component scores and the final score
 are in **[0, 1]**. `final = reconstruction * expert_preference * collision`.
 An unavailable component makes the product `null`, even if another component
 is zero. A successfully evaluated failure can legitimately score zero.
@@ -8,8 +10,10 @@ is zero. A successfully evaluated failure can legitimately score zero.
 ## Reconstruction consistency
 
 Keep the existing primitive-baseline correction and 48-orientation IoU search.
-Let q be corrected IoU. Score 0 for q <= 0.90, 1 for q >= 0.99, otherwise
-(q - 0.90) / 0.09. Preserve raw IoU, baseline and q. The low-level IoU artifact
+`b = max(IoU(reference, box), IoU(reference, sphere), IoU(reference, cylinder))`.
+`q = clamp((raw_iou-b)/(1-b), 0, 1)`. If b=1, q=1 only when raw IoU=1, else q=0.
+Let q be corrected IoU. Score 0 for q <= 0.90, 1 for q >= 0.995, otherwise
+(q - 0.90) / 0.095. Preserve raw IoU, baseline and q. The low-level IoU artifact
 keeps `reconstruction_score_100` for historical compatibility; new summaries
 divide it by 100 and declare `score_scale: "0..1"`.
 
@@ -55,19 +59,49 @@ silently promoted to trusted operation logs.
 
 ## Annotation collision
 
-Start at 1, deduct 0.05 per distinct unordered annotation pair, floor at zero.
-Count text/text overlap or another annotation's lines/arrows crossing text.
-Multiple contacts between the same pair count once. Do not count model-view
-geometry, line/line crossings, or contacts within one dimension object.
+Policy: `rendered-ink-contact/1`. Start at 1, deduct 0.05 per distinct
+contact pair, floor at zero. Text/text and text/visible-geometry contacts count,
+including boundary touching. Line/line contacts never deduct; in particular,
+annotation lines crossing views are allowed. There is no separate layer penalty.
 
-Use final DXF DIMENSION objects and text entities, including nested blocks.
-Exclude sheet/title/table geometry and view blocks. Text footprints are ezdxf
-oriented extent estimates, not exact glyph ink. Require >0.05 mm penetration;
-simple boundary contact is ignored. The footprint method and pair locations
-are saved with the result. Pin the CAD image/fonts when comparing runs.
-Unresolved LEADER/MULTILEADER entities return unscored, not a partial full score.
-Exploded annotations without semantic grouping cannot be treated as complete
-dimension objects: retain DIMENSION entities via the supplied toolkit.
+All visible TEXT, MTEXT, ATTRIB and decomposed DIMENSION/MULTILEADER text is
+protected, including title blocks and tables. Centre lines, cutting indicators,
+dimension/extension lines, leaders and arrows can collide with text. Membership
+in the same dimension is not an exemption. Empty text is ignored.
+
+Use the ezdxf drawing frontend to render glyph contours, including glyph holes,
+and actual dashed strokes with resolved lineweight. A spatial index filters
+candidates, then Shapely tests ink intersection or boundary contact. Glyph and
+curve flattening is 0.001 mm; numerical contact tolerance is 1e-8 mm, not a
+minimum clearance requirement. A positive visible gap is not penalized. Stroke
+caps/joins are approximated as round. This is a specified reference rendering,
+not a guarantee of identical appearance in all CAD viewers or on all printers.
+
+Deduplicate each text/text pair; each text/view pair across edges; each
+text/native annotation pair across component lines. Texts in the same annotation
+are still checked against each other. Each geometry entity belongs to one group,
+so one entity contact is never counted under two categories. Exploded standalone
+lines lacking trustworthy parentage remain separate objects; adjacency alone
+cannot prove a shared annotation. This grouping limitation is reported.
+
+CQ `VIEW_*` blocks and hash-bound SW native view outlines assist grouping.
+Unknown roles and geometry outside view outlines remain checked as standalone
+geometry; wrong layers cannot silently exclude their strokes. Off/frozen layers
+and invisible entities are not rendered. Input containing the reserved review-overlay layer is flagged as an invalid
+review/submission mix; it cannot hide submitted text or receive a full score. Hatch patterns and outlined/raster text remain outside current scope;
+unsupported entities and nonempty paper space make the score unavailable.
+
+Record requested/resolved font basenames and available font-file hashes.
+Documented, available SHX font mappings are accepted. Missing requested fonts
+(including SHX with no available mapping) leave the score null; fallback-rendered
+contacts are diagnostic only. Font availability is an environment limitation,
+not an AI penalty. Inline MTEXT font overrides and platform-dependent font
+resolution still require calibration before cross-platform score comparisons.
+
+Every contact records text content, entity IDs, layers, category and coordinates.
+`drawing-collision-check.dxf` is a separate monochrome copy with red frames
+around affected texts on `BC_COLLISION_CHECK`. A color PNG is produced when
+available. Original submissions and historical reports are never overwritten.
 
 ## Runtime and records
 
@@ -91,3 +125,15 @@ and validates the existing low-level IoU artifact. Missing expert evidence
 leaves preference and the product null while still reporting collision results.
 The workbench's legacy transport key `section_match` carries expert preference;
 the main summary uses the explicit key `expert_preference`.
+
+## Local regrading of CQ and SolidWorks history
+
+`python -m evaluation.rescore --dxf INPUT.dxf --iou-json IOU.json --output-dir NEW_DIRECTORY`
+reuses a trusted historical raw IoU and primitive baseline, applies the new
+0.90..0.995 mapping, and runs collision checks. It makes no model request and
+writes a new metrics.json, marked DXF/PNG and index.html. It does not recompute
+3D overlap. For SW add `--native-views drawing.json`. For CQ expert scoring also
+supply `--expert-json`, `--reference-step` and `--operation-log`; final view
+evidence is regenerated and checked. A native SW expert-evidence adapter remains
+pending; providing an arbitrary JSON must not promote it to verified evidence.
+Missing/unsupported expert evidence leaves both preference and product null.

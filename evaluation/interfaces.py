@@ -65,6 +65,24 @@ def run_existing_iou(command: list[str], reference: Path, candidate: Path,
     return result
 
 
+def upgrade_iou_result(result: dict) -> dict:
+    """Validate a v2 cached geometry result, then explicitly apply the v3 mapping."""
+    from .scoring import VERSION, reconstruction_score
+    if result.get('metric_version') == 'normalized-iou48-primitive-threshold/2':
+        expected = reconstruction_score(result.get('iou'), result.get('primitive_baseline'))
+        q = expected['corrected_iou']
+        old_score = min(100., max(0., 100 * (q-.90)/(.99-.90)))
+        for key, value in (('raw_iou', expected['raw_iou']), ('corrected_iou', q),
+                           ('reconstruction_score_100', old_score)):
+            actual = result.get(key)
+            if type(actual) not in (int, float) or not math.isfinite(actual) or not math.isclose(actual, value, abs_tol=1e-10):
+                raise ValueError('Inconsistent cached v2 IoU scoring fields')
+        result = {**result, **expected, 'source_metric_version': result['metric_version'],
+                  'metric_version': VERSION, 'geometry_recomputed': False}
+    validate_iou_result(result)
+    return result
+
+
 def validate_iou_result(result: dict) -> None:
     score = result.get("iou")
     if result.get("status") != "computed" or type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1:

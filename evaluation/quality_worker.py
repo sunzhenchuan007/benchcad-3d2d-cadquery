@@ -4,17 +4,22 @@ import json
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 
-from evaluation.collisions import score_dxf
+from evaluation.collisions import score_dxf, render_check
 from evaluation.drawing_metrics import score_expert
 from evaluation.view_evidence import verify
 
 
 def run(root):
     result={}
-    try:result['annotation_collision']=score_dxf(root/'drawing.dxf')
+    try:result['annotation_collision']=score_dxf(root/'drawing.dxf', check_path=root/'drawing-collision-check.dxf')
     except Exception as exc:
         result['annotation_collision']={'metric':'annotation_collision','status':'failed','score':None,
                                         'reason':'collision_evaluation_failed','error_type':type(exc).__name__}
+    if (root/'drawing-collision-check.dxf').exists():
+        try:
+            render_check(root/'drawing-collision-check.dxf',root/'drawing-collision-check.png')
+        except Exception as exc:
+            result['annotation_collision']['preview_error_type']=type(exc).__name__
     preference={'metric':'expert_preference','status':'not_evaluated','score':None,'score_scale':'0..1'}
     if not (root/'expert.json').exists():preference['reason']='expert_json_not_configured'
     elif not (root/'drawing.operations.jsonl').exists():preference['reason']='tool_operation_log_missing'

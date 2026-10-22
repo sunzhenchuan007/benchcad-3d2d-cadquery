@@ -40,6 +40,8 @@ def write_report(root: Path, summary: dict, filename: str = 'report.html') -> No
                         ('reconstruction/bundle/model.step', '重建 STEP'),
                         ('evaluation/candidate.json', '评分证据'), ('evaluation/identity.json', '同模型对照校验'),
                         ('drawing-evaluation/quality.json', '专家偏好与碰撞明细'),
+                        ('drawing-evaluation/drawing-collision-check.dxf', '碰撞标红检查版 DXF'),
+                        ('drawing-evaluation/drawing-collision-check.png', '碰撞标红检查预览'),
                         ('drawing-evaluation/sections.json', '操作日志转换并核验后的 JSON')]:
         if (root / name).is_file():
             links.append(f'<a href="{name}">{title}</a>')
@@ -54,7 +56,7 @@ def write_report(root: Path, summary: dict, filename: str = 'report.html') -> No
             '<p>模型：' + esc(summary.get('model')) + '。流程完成：' + esc(summary['success']) + '</p>'
             + ('<p>这是固定代码流程检查，不是模型运行，不能作为 AI 能力得分。</p>'
                if summary.get('trusted_replay') else '')
-            + '<p>' + scoring + '</p><p>碰撞只检查标注之间；文字范围采用固定的近似估算。专家偏好须有同一 case 的专家 JSON 和通过核验的最终视图记录。</p>'
+            + '<p>' + scoring + '</p><p>碰撞检查文字与文字、文字与轮廓线、标注线、中心线和剖切线；边缘接触也扣分，线与线相交不扣分。使用渲染字形和线宽，字体缺失时不评分。红框检查版另存，不修改提交图纸。专家偏好须有同一 case 的专家 JSON 和通过核验的最终视图记录。</p>'
             '<table><tr><th>阶段</th><th>结束状态</th><th>决策轮数</th><th>代码执行数</th><th>秒</th></tr>'
             + ''.join(rows) + '</table><p>可见文本 token：输入 ' + esc(usage.get('input_tokens'))
             + '；输出 ' + esc(usage.get('output_tokens')) + '。真实计费费用未知。</p>'
