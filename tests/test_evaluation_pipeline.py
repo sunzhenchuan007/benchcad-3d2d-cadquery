@@ -29,7 +29,7 @@ class PipelineTests(unittest.TestCase):
   def execute(command,timeout,directory):
    label=directory.name;w=self.root/'evaluation/workspace'
    self.assertEqual(set(p.name for p in w.iterdir()),{'reference.step','candidate.step'} if label=='identity' else {'reference.step','candidate.step','identity.json'})
-   self.assertIn('-I',command);self.assertLessEqual(timeout,300)
+   self.assertIn('-I',command);self.assertLessEqual(timeout,400)
    (w/(label+'.json')).write_text(json.dumps(self.result(label,1 if label=='identity' else .3)))
    return Execution(0)
   with patch('evaluation.pipeline.DockerExecutor') as ex:
@@ -40,7 +40,7 @@ class PipelineTests(unittest.TestCase):
   self.assertTrue(s['success'])
   save_summary_and_report(self.root,s)
   page=(self.root/'report.html').read_text(encoding='utf-8')
-  self.assertIn('已评分',page);self.assertIn('0.00 / 100',page)
+  self.assertIn('重建一致性',page);self.assertIn('0.0000 / 1',page)
   self.assertNotIn('awaiting_independent_AI_reconstruction',json.dumps(s))
  def test_invalid_frozen_hash_fails_before_docker(self):
   (self.bundle/'model.step').write_bytes(b'mutated')

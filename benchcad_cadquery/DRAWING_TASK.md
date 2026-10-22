@@ -36,7 +36,7 @@ assert Path('output/drawing.dxf').is_file()
 
 The final deliverable is the DXF and its controller-rendered PNG.
 
-Default limits: 30 decision responses, 1800 seconds for this stage, 300 seconds
+Default limits: 60 decision responses, 7200 seconds for this stage, 300 seconds
 per code execution, 1 CPU, 4096 MiB memory. The system prompt supplies any lower
 limits. Invalid formats and failed code still consume decisions. Each execution
 uses a fresh non-root Linux container with no network and a read-only system.

@@ -11,7 +11,7 @@ from .interfaces import validate_iou_result
 
 
 def evaluate_frozen(root: Path, reference: Path, bundle: Path, vendor: Path,
-                    image: str, limits: DockerLimits, timeout: float = 300) -> dict:
+                    image: str, limits: DockerLimits, timeout: float = 400) -> dict:
     started = time.monotonic()
     stage = root / 'evaluation'
     stage.mkdir(mode=0o700, exist_ok=False)
@@ -74,7 +74,7 @@ def evaluate_frozen(root: Path, reference: Path, bundle: Path, vendor: Path,
 
 def complete_evaluation(summary: dict, root: Path, reference: Path | None,
                         vendor: Path | None, image: str, limits: DockerLimits,
-                        timeout: float = 300) -> dict:
+                        timeout: float = 400) -> dict:
     """Called after both agent loops end; failures remain unscored, never zero."""
     result = {'metric': 'reconstruction_iou', 'status': 'not_evaluated', 'score': None}
     reconstruction = summary['stages'].get('reconstruction', {})
@@ -89,7 +89,8 @@ def complete_evaluation(summary: dict, root: Path, reference: Path | None,
         try:
             metric = evaluate_frozen(root, reference, Path(reconstruction['bundle']), vendor,
                                      image, limits, timeout)
-            result.update(status='computed', score=metric['reconstruction_score_100'], score_scale='0..100',
+            result.update(status='computed', score=metric['reconstruction_score_100']/100, score_scale='0..1',
+                          reconstruction_score_100=metric['reconstruction_score_100'],
                           reason='independent_reconstruction_evaluated', evidence='evaluation/candidate.json',
                           **{k: metric[k] for k in ('raw_iou', 'primitive_baseline', 'corrected_iou', 'metric_version')})
         except Exception as exc:

@@ -38,8 +38,8 @@ class DeferredCollisionScorer:
 
 def pending_metrics(bundle: Path) -> dict:
     return {
-        "section_match": asdict(DeferredSectionMatcher().evaluate(bundle / "drawing.json")),
-        "annotation_collision": asdict(DeferredCollisionScorer().evaluate(bundle / "drawing.dxf")),
+        "expert_preference": asdict(MetricResult("expert_preference", "not_evaluated", reason="awaiting_final_drawing_evaluation")),
+        "annotation_collision": asdict(MetricResult("annotation_collision", "not_evaluated", reason="awaiting_final_drawing_evaluation")),
         "reconstruction_iou": asdict(MetricResult("reconstruction_iou", "not_evaluated",
                                                   reason="awaiting_independent_AI_reconstruction")),
         "overall_score": None, "formal_score": False,

@@ -16,3 +16,22 @@ credentials*
 *.pem
 *.key
 .DS_Store
+# Case data and generated CAD artifacts stay outside framework releases.
+/cases/
+*.step
+*.stp
+*.stl
+*.dxf
+*.sldprt
+*.sldasm
+*.slddrw
+*.STEP
+*.STP
+*.DXF
+*.SLDPRT
+*.SLDASM
+*.SLDDRW
+*.zip
+*.npz
+/AGENTS.md
+/config.local.toml

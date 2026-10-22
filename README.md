@@ -1,10 +1,16 @@
 # BenchCAD 3D2D CadQuery
 
+The workbench imports immutable display packages grouped by case and run.
+See [result packages and synchronization](docs/WORKBENCH_RESULTS.md) for the
+completion callback, upload-only retries, publication boundary and same-host layout.
+
 A minimal **development pilot**: a custom Responses API agent draws a STEP in
 Linux Docker; an optional independent agent reconstructs from the frozen DXF and
 PNG. The tested agent is an API model, not Codex CLI. Windows is for development
-and offline unit tests only. Expert baseline and section/collision scoring
-are disabled; a separate [normalized IoU evaluator](evaluation/README.md) is provided.
+and offline unit tests only. [Three metrics](docs/METRICS.md) report reconstruction
+consistency, expert preference and annotation collisions in 0..1; their product
+is the final score when all three are available. Expert-drawing baseline correction
+remains disabled; a separate [normalized IoU evaluator](evaluation/README.md) is provided.
 No claim of an engineering-complete drawing toolkit or
 verified hostile-code isolation. See [agent contract](docs/AGENT_SPEC.md) and
 [Chinese setup](README.zh-CN.md).
@@ -12,7 +18,8 @@ verified hostile-code isolation. See [agent contract](docs/AGENT_SPEC.md) and
 For the setup/check/run wrapper see [quick start](docs/QUICKSTART.zh-CN.md).
 For retained requests, replies, execution errors and immutable image snapshots
 see [logging](docs/LOGGING.md). [Operation JSON](docs/OPERATION_LOG.md) is an
-unverified declaration converter; controlled capture and section scoring remain pending.
+unverified declaration converter. The new tool log is captured on submission,
+replayed and geometrically verified before automatic expert-preference scoring.
 
 ## Linux setup
 
@@ -60,14 +67,22 @@ are consulted. The operator must supply the exact model ID; there is no fallback
   --step /data/input/model.step --run-dir .runs/run-001 \
   --model gpt-6-sol --image benchcad-cadquery:local --reconstruct \
   --iou-vendor /data/tools/benchcad-2-main \
-  --rounds 30 --wall-seconds 1800 --execution-seconds 300 --memory-mib 4096 --cpus 1
+  --rounds 60 --wall-seconds 7200 --execution-seconds 300 --memory-mib 4096 --cpus 1
 ```
 
 Omit `--reconstruct` for drawing only. `--config config.example.toml` loads only
 that explicitly selected file; CLI options take priority. Set `api.model` or
 pass `--model`. An explicit configured base URL takes precedence over environment
-aliases. Lower decision/time budgets are allowed, higher than 30/1800/300 are not.
+aliases. Lower decision/time budgets are allowed, higher than 60/7200/300 are not.
 Each stage gets a fresh context, workspace, container sequence, and budget.
+The default output cap is 500,000 tokens per API response, including provider-counted
+reasoning tokens; it is not a whole-stage token budget. Historical runs keep their
+original limits. Explicit development continuations count prior rounds/time cumulatively.
+The 500K ceiling is a requested API limit, not a guarantee that every provider
+supports it. Unsupported configurations stop with a recorded API error; choose
+an explicit supported override rather than silently changing an experiment.
+The two-hour budget is per stage, so drawing and reconstruction each have their
+own budget. Scoring runs afterward under its separate evaluator timeout.
 
 Results: `summary.json`, per-stage `episode/`, `executions/`, `finalize/`, and
 `bundle/manifest.json`. Only successful explicit submission creates a bundle;

@@ -3,10 +3,11 @@
 Python 3.11; CadQuery 2.7.0/OCP; ezdxf 1.4.4; PyMuPDF 1.28.2; Pillow;
 NumPy/SciPy. Raw CadQuery, OCP, and ezdxf are allowed. No network, shell-side
 package installs, credentials, host home, GT, or Docker socket are available.
-The working directory is `/workspace`. Import the toolkit with
-`from benchcad_cadquery.drawing import Drawing, render`.
+The working directory is `/workspace`. Import the helpers documented below.
 
 ## Drawing from a STEP (drawing stage only)
+
+`from benchcad_cadquery.drawing import Drawing, render`
 
 `Drawing(step='input/model.step', path='output/drawing.dxf', title='...')`
 loads the shape and creates an A3-sized millimetre DXF with frame and dimension
@@ -14,7 +15,13 @@ style. `d.model` is the CadQuery shape; `d.doc` is the ezdxf document. `d.save()
 writes DXF and an explicitly untrusted `.state.json` companion. To continue in a
 later execution: `d = Drawing.open()`; both files must still exist. Raw ezdxf
 workflows do not need this state. State is not verified evidence or GT and is
-never transferred to reconstruction.
+never transferred to reconstruction. The toolkit also writes
+`drawing.operations.jsonl` automatically. Keep this file when continuing a
+drawing. Do not author a separate scoring JSON: the evaluator replays these
+operations and regenerates final view geometry before using the derived JSON.
+Finish edits with `d.save()` so the final DXF checksum is recorded. Do not rename
+or directly alter generated view blocks; annotations may be edited through
+ezdxf before that save. Unsupported custom view geometry is explicitly unscored.
 
 When the controller supplies `input/template.dxf`, `Drawing()` automatically
 loads its blank sheet instead of creating another frame. An explicit path is
@@ -31,6 +38,22 @@ Inspect and clear unused view placeholders/product fields as appropriate. The
 working state records the template SHA256, not its original local path. The
 template is an optional drawing input and is never transferred separately to
 the reconstruction agent.
+
+The bottom-right product-specification table is optional. In the optional-table
+template its cells are blank: you may fill, relabel, move, resize, retain, or
+delete the table to suit the part. Do not invent specifications to fill cells.
+This permission concerns the product table, not a requirement to remove the
+sheet border, title block, technical notes, or actual dimensions.
+After `Drawing()` loads the template, edit `d.doc.modelspace()`; the source
+paper-layout name is not the working layout. For example, to remove only a
+product-table block insert when you decide it is unnecessary:
+
+```python
+for entity in list(d.doc.modelspace().query('INSERT')):
+    if 'PRODUCT_SPEC' in entity.dxf.name.upper():
+        d.doc.modelspace().delete_entity(entity)
+d.save()
+```
 
 `d.projection(name, normal=(0,0,1), xdir=(1,0,0), position=(100,180), scale=1)`
 uses OCP hidden-line removal. The viewer is on the +normal side. Local drawing X
@@ -57,8 +80,11 @@ The helper does not automatically draw a cutting-plane indicator: add correct
 labels/arrows yourself. There is no half-section or offset-section helper yet.
 You may construct genuine half/offset sections with raw OCP/ezdxf when needed.
 Never fake a section by hatching an uncut projection. Main views, full sections,
-and genuine manually constructed half sections are permitted; none is scored by
-a section-matching metric in this pilot.
+and genuine manually constructed half sections are permitted. The current
+automatic evidence verifier supports toolkit `projection` and `full_section`
+only. Manually constructed or modified view geometry cannot receive an expert
+preference score until an appropriate geometry verifier exists; it is recorded
+as unscored, never as a perfect score. Dimensions and notes can be edited freely.
 
 `d.linear_dimension(p1, p2, base, angle=0, view=None, text='<>')` creates and renders
 a native DXF DIMENSION. Points and base are paper-space coordinates, not 3D model
@@ -85,7 +111,13 @@ These dimensions are a generic example, not facts about the current input.
 
 ## Preview and DXF inspection (both stages)
 
+`from benchcad_cadquery.drawing import render`
+
 `render('input/drawing.dxf', 'preview.png')` renders a DXF with ezdxf/PyMuPDF.
+If model space is empty, it loads the single millimetre paper-space template
+using the same rules as `Drawing()`. Thus `render('input/template.dxf', 'template.png')`
+can preview the supplied blank sheet. Ambiguous paper layouts are rejected;
+the source DXF is never modified.
 `d.preview('preview.png')` first saves the current drawing. A changed PNG at the
 workspace root or directly in `output/` is validated and snapshotted outside the writable workspace before it is
 returned as feedback. Use PNG only: maximum 12 MiB, 4096 pixels per dimension,
@@ -107,12 +139,26 @@ for e in doc.modelspace().query('INSERT'):
 
 ## Reconstruction with CadQuery
 
+`from benchcad_cadquery.inspection import crop_image`
+
+`crop_image('input/drawing.png', (left,top,right,bottom))` writes
+an `output/detail_<id>.png` file per source/region, and returns its path and size.
+Different crops in one response keep separate files and are returned together.
+Pass a third `png` argument only when you want an explicit output name; reusing
+that name overwrites the previous crop. Coordinates are integers in the original image, not its
+on-screen display size. This preserves original pixels; it does not recover
+missing detail. For detail absent from the PNG, inspect the corresponding DXF
+entities or write a custom DXF rendering script.
+
 ```python
 import cadquery as cq
 # Replace the example parameters and features with your drawing interpretation.
 model = cq.Workplane('XY').box(60,40,8).faces('>Z').workplane().hole(10)
 cq.exporters.export(model, 'output/model.step')
 ```
+
+Keep reusable modeling code in a workspace file, edit it between rounds, and
+submit the saved result after checking it against the task requirements.
 
 Use CadQuery solids, sketches, booleans, and raw OCP as needed. No helper imports
 an absent original STEP for reconstruction. Only files supplied in this stage

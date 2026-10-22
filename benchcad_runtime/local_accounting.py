@@ -6,6 +6,7 @@ from functools import lru_cache
 import hashlib
 import importlib.metadata
 import math
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -74,9 +75,14 @@ def estimate_request(payload):
     """Count the actual outgoing instructions and every history text part anew."""
     validate_instructions(payload.get("instructions"))
     parts = [_count(payload["instructions"])]
+    if payload.get('tools'):
+        parts.append(_count(json.dumps(payload['tools'])))
     images = 0
     for message in payload["input"]:
-        content = message["content"]
+        if message.get('type') == 'function_call':
+            parts.extend([_count(message['name']), _count(message['arguments'])])
+            continue
+        content = message['output'] if message.get('type') == 'function_call_output' else message['content']
         if isinstance(content, str):
             parts.append(_count(content))
         else:

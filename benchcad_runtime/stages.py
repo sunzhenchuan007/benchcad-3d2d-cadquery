@@ -17,7 +17,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / 'benchcad_cadquery'
 def source_snapshot(destination: Path) -> Path:
     package = destination / 'benchcad_cadquery'
     package.mkdir(parents=True, exist_ok=False)
-    for name in ('__init__.py', 'drawing.py', 'templates.py', 'worker.py'):
+    for name in ('__init__.py', 'drawing.py', 'templates.py', 'worker.py', 'operations.py', 'inspection.py'):
         write_new(package / name, read_regular(PACKAGE, name, 1024 * 1024, allow_empty=True), readonly=True)
     return destination.resolve()
 
@@ -30,7 +30,14 @@ def prepare_workspace(stage: Path, kind: str) -> Path:
     (workspace / 'input').mkdir()
     (workspace / 'output').mkdir()
     write_new(workspace / 'TASK.md', read_regular(PACKAGE, kind.upper() + '_TASK.md', 100000))
-    write_new(workspace / 'TOOLS.md', read_regular(PACKAGE, 'TOOLS.md', 100000))
+    guide = read_regular(PACKAGE, 'TOOLS.md', 100000).decode('utf-8')
+    if kind == 'reconstruction':
+        # Keep one canonical guide, but do not prompt reconstruction with drawing
+        # state, section-operation logging or unavailable source-STEP workflows.
+        common, drawing = guide.split('## Drawing from a STEP (drawing stage only)', 1)
+        inspection = drawing.split('## Preview and DXF inspection (both stages)', 1)[1]
+        guide = common + '## Preview and DXF inspection (both stages)' + inspection
+    write_new(workspace / 'TOOLS.md', guide.encode('utf-8'))
     return workspace
 
 
@@ -110,6 +117,21 @@ class StageFinalizer:
             files['drawing.png'] = png
         if time.monotonic() - start >= timeout:
             raise TimeoutError('Stage deadline exceeded during finalization')
+        if self.kind == 'drawing':
+            # Capture bytes outside the agent workspace. Conversion/geometry
+            # verification is evaluator-owned and does not enter reconstruction.
+            evidence = self.stage / 'evidence'
+            evidence.mkdir(exist_ok=False)
+            captured = {}
+            for name in ('drawing.operations.jsonl', 'drawing.state.json'):
+                try:
+                    payload = read_regular(self.workspace, 'output/' + name, 16*1024*1024)
+                    write_new(evidence / name, payload, readonly=True)
+                    captured[name] = {'sha256': sha256(payload), 'bytes': len(payload)}
+                except (OSError, ValueError) as exc:
+                    captured[name] = {'status': 'unavailable', 'error_type': type(exc).__name__}
+            write_new(evidence / 'capture.json', json.dumps({'dxf_sha256': sha256(data),
+                      'files': captured, 'content_verified': False}).encode(), readonly=True)
         manifest = {'schema': 'benchcad-frozen-bundle/1', 'kind': self.kind,
                     'files': {name: {'sha256': sha256(value), 'bytes': len(value)}
                               for name, value in files.items()},

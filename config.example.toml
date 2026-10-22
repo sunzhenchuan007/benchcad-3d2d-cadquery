@@ -2,17 +2,30 @@
 # The key is read only from OPENAI_API_KEY in the controller environment.
 [api]
 protocol = "responses"
+# Opt in explicitly for native execute_python/submit function calls.
+action_protocol = "fenced" # or "native"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = ""
-max_output_tokens = 8192
+max_output_tokens = 500000
+# Per-response requested ceiling, including reasoning; not a whole-run budget.
+# Providers may impose a lower maximum. Rejections are recorded; no silent clamp
+# or fallback model is applied. Set an explicit provider-supported override.
+# Provider request cap, including encoded images and history.
+max_request_bytes = 67108864
+# DeepSeek official: base_url=https://api.deepseek.com, model=deepseek-flash,
+# max_request_bytes=50331648. Uses the same Responses protocol.
+# The cap includes reasoning, not just visible code. Record changes between runs.
 # reasoning_effort = "high"
 
 [budget]
-rounds = 30
-wall_seconds = 1800
+rounds = 60
+wall_seconds = 7200
 execution_seconds = 300
 max_transport_failures = 3
+# Stop a diagnostic run after repeated output-token exhaustion; no automatic
+# larger token budget, model switch, or new episode. Includes reasoning tokens.
+max_consecutive_output_limits = 2
 
 [executor]
 backend = "docker"
@@ -28,4 +41,6 @@ log_bytes = 8388608
 # iou_vendor = "/path/to/benchcad-2-main"
 evaluator_image = "benchcad-cadquery:evaluator"
 evaluation_seconds = 300
+drawing_evaluation_seconds = 300
+# expert_json = "private/expert.json"
 # reference_step is only needed for standalone reconstruct/evaluate commands.

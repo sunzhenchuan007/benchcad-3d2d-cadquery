@@ -10,6 +10,7 @@ import time
 from urllib.parse import urlsplit
 from .episode import Reply, TransportError
 from .local_accounting import estimate_request, account_response, validate_instructions
+from .native_tools import TOOLS, PROTOCOL
 
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 
@@ -33,7 +34,9 @@ def preflight_request_bytes(metadata, messages, limit):
     inputs, encoded_image_bytes = [], 0
     for msg in messages:
         if msg['role'] == 'assistant':
-            inputs.append({'role': 'assistant', 'content': msg['text']})
+            if msg['text'] or not msg.get('tool_calls'):
+                inputs.append({'role': 'assistant', 'content': msg['text']})
+            inputs.extend(msg.get('tool_calls', []))
             continue
         content = [{'type': 'input_text', 'text': msg['text']}]
         for filename in msg.get('images', []):
@@ -45,7 +48,15 @@ def preflight_request_bytes(metadata, messages, limit):
                 raise RequestBudgetError(limit, 'preflight')
             content.append({'type': 'input_image', 'detail': 'high',
                             'image_url': 'data:image/png;base64,'})
-        inputs.append({'role': 'user', 'content': content})
+        if msg.get('tool_call_ids'):
+            for call_id in msg['tool_call_ids']:
+                inputs.append({'type': 'function_call_output', 'call_id': call_id,
+                               'output': msg['text']})
+            # Only one call can execute, so images belong to its result.
+            if msg.get('images'):
+                inputs[-1]['output'] = content
+        else:
+            inputs.append({'role': 'user', 'content': content})
     estimated = encoded_image_bytes
     # iterencode avoids one additional full text-payload copy during preflight.
     for chunk in json.JSONEncoder().iterencode(dict(metadata, input=inputs)):
@@ -70,7 +81,9 @@ def encode_messages(messages):
     result = []
     for msg in messages:
         if msg['role'] == 'assistant':
-            result.append({'role':'assistant', 'content':msg['text']})
+            if msg['text'] or not msg.get('tool_calls'):
+                result.append({'role':'assistant', 'content':msg['text']})
+            result.extend(msg.get('tool_calls', []))
             continue
         content = [{'type':'input_text', 'text':msg['text']}]
         for filename in msg.get('images', []):
@@ -82,7 +95,14 @@ def encode_messages(messages):
                 raise ValueError('Only validated PNG observations are accepted')
             content.append({'type':'input_image','detail':'high',
                             'image_url':'data:image/png;base64,'+base64.b64encode(data).decode('ascii')})
-        result.append({'role':'user','content':content})
+        if msg.get('tool_call_ids'):
+            for call_id in msg['tool_call_ids']:
+                result.append({'type': 'function_call_output', 'call_id': call_id,
+                               'output': msg['text']})
+            if msg.get('images'):
+                result[-1]['output'] = content
+        else:
+            result.append({'role':'user','content':content})
     return result
 
 
@@ -96,8 +116,8 @@ def responses_url(base_url):
 
 
 class OpenAIResponses:
-    def __init__(self, model, max_output_tokens=8192, reasoning_effort=None, base_url=None,
-                 max_request_bytes=MAX_REQUEST_BYTES):
+    def __init__(self, model, max_output_tokens=500000, reasoning_effort=None, base_url=None,
+                 max_request_bytes=MAX_REQUEST_BYTES, native_tools=False):
         if not model or not model.strip():
             raise ValueError('An exact model ID is required; no automatic model substitution')
         if not os.environ.get('OPENAI_API_KEY'):
@@ -109,6 +129,7 @@ class OpenAIResponses:
         self.max_request_bytes = max_request_bytes
         self.model, self.max_output_tokens = model, max_output_tokens
         self.reasoning_effort = reasoning_effort
+        self.action_protocol = PROTOCOL if native_tools else 'ordered-python-blocks/2'
         self.url = responses_url(base_url or os.environ.get('OPENAI_BASE_URL','https://api.openai.com/v1'))
 
     def __call__(self, system, messages, timeout):
@@ -128,6 +149,10 @@ class OpenAIResponses:
         validate_instructions(system)
         payload = {'model':self.model, 'instructions':system,
                    'max_output_tokens':self.max_output_tokens, 'store':False}
+        if self.action_protocol == PROTOCOL:
+            # Thinking-mode providers may reject forced tool_choice='required'.
+            # The controller still rejects plain-text actions without executing them.
+            payload.update(tools=TOOLS, tool_choice='auto', parallel_tool_calls=False)
         if self.reasoning_effort:
             payload['reasoning'] = {'effort':self.reasoning_effort}
         preflight_request_bytes(payload, messages, self.max_request_bytes)
@@ -172,8 +197,17 @@ class OpenAIResponses:
             if not isinstance(response.get('output'), list):
                 raise ValueError("Missing response output")
             parts = []
+            tool_calls = []
             refused = False
             for item in response['output']:
+                if item.get('type') == 'function_call' and self.action_protocol == PROTOCOL:
+                    if any(not isinstance(item.get(k), str) or not item[k]
+                           for k in ('call_id', 'name', 'arguments')):
+                        raise ValueError('Malformed tool call fields')
+                    if any(c['call_id'] == item['call_id'] for c in tool_calls):
+                        raise ValueError('Duplicate tool call ID')
+                    tool_calls.append({k: item[k] for k in ('type', 'call_id', 'name', 'arguments')})
+                    continue
                 if item.get('type') != 'message':
                     continue  # Reasoning and other non-message output are not visible text.
                 for part in item['content']:
@@ -186,11 +220,17 @@ class OpenAIResponses:
                 raise ValueError("Invalid visible text")
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise TransportError('OpenAI response malformed; output usage unknown', local_usage) from exc
-        local_usage = account_response(local_usage, parts, response.get('model'))
+        local_usage = account_response(local_usage, parts + [s for c in tool_calls
+                                       for s in (c['name'], c['arguments'])], response.get('model'))
+        details = response.get('incomplete_details')
+        reason = details.get('reason') if isinstance(details, dict) else None
+        if reason not in ('max_output_tokens', 'content_filter'):
+            reason = None
         # Preserve all returned visible text, but never execute incomplete/refused replies.
         return Reply('\n'.join(parts), response.get('usage'), local_usage,
                      executable=response.get('status') == 'completed' and not refused,
-                     response_status=response.get('status'))
+                     response_status=response.get('status'), incomplete_reason=reason,
+                     tool_calls=tool_calls)
 
 
 class ModelConfigurationError(RuntimeError):

@@ -58,6 +58,14 @@ class RequestBoundaryTests(unittest.TestCase):
                 model('Explicit instructions', self.messages, 60)
         run.assert_not_called()
 
+    def test_incomplete_reason_is_returned_without_executing_partial_reply(self):
+        response = self.result({'status':'incomplete','model':'test-model', 'output':[],
+                               'incomplete_details':{'reason':'max_output_tokens'}})
+        with patch.object(api.subprocess, 'run', return_value=response):
+            reply = api.OpenAIResponses('test-model')('Explicit instructions',self.messages,60)
+        self.assertFalse(reply.executable)
+        self.assertEqual(reply.incomplete_reason,'max_output_tokens')
+
     def test_final_serialization_is_checked_again(self):
         model = api.OpenAIResponses('test-model', max_request_bytes=1024)
         with patch.object(api, 'encode_messages', return_value=[{'role': 'user', 'content': 'x'*2048}]), \

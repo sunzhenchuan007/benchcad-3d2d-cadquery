@@ -6,26 +6,41 @@ import json
 from pathlib import Path
 
 from .artifacts import write_new
+from .view_summary import generate as generate_views, section as view_section
 
 
 def write_report(root: Path, summary: dict, filename: str = 'report.html') -> None:
+    views = generate_views(root)
     esc = lambda value: html.escape(str(value))
     rows = []
     for name, stage in summary['stages'].items():
-        values = [name, stage['ended_by'], stage['decision_rounds'], stage['code_executions'],
+        status = stage['ended_by']
+        if status == 'response_budget_exhausted':
+            status += '（连续回复耗尽输出预算；不是几何评分）'
+        values = [name, status, stage['decision_rounds'], stage['code_executions'],
                   round(stage['wall_seconds'], 2)]
         rows.append('<tr>' + ''.join('<td>' + esc(value) + '</td>' for value in values) + '</tr>')
     metric = summary['metrics']['reconstruction_iou']
     if metric['status'] == 'computed':
-        scoring = (f"已评分：<strong>{metric['score']:.2f} / 100</strong>。"
+        value = metric['score'] if metric.get('score_scale') == '0..1' else metric['score']/100
+        scoring = (f"重建一致性：<strong>{value:.4f} / 1</strong>。"
                    f"原始 IoU：{metric['raw_iou']:.6f}；校正 IoU：{metric['corrected_iou']:.6f}。")
     else:
         scoring = '未评分：' + esc(metric['status']) + ' / ' + esc(metric.get('reason', '')) + '。不是零分。'
+    for key, label in [('expert_preference','专家偏好'),('annotation_collision','标注碰撞')]:
+        item=summary['metrics'].get(key,{})
+        scoring += '<br>' + label + '：' + (f"{item['score']:.4f} / 1" if item.get('status')=='computed'
+                   else '未评分（'+esc(item.get('reason','not_evaluated'))+'）')
+    total=summary['metrics'].get('overall_score')
+    scoring += '<br><strong>最终分数：' + (f'{total:.4f} / 1' if total is not None else '未评分') + '</strong>。三项相乘；缺项不补 0 或 1。'
     links = []
     for name, title in [('summary.json', '运行汇总'), ('evaluated-summary.json', '评测汇总'),
+                        ('scored-summary.json', '三项指标汇总'),
                         ('drawing/bundle/drawing.dxf', 'DXF'), ('drawing/bundle/drawing.png', '最终图纸'),
                         ('reconstruction/bundle/model.step', '重建 STEP'),
-                        ('evaluation/candidate.json', '评分证据'), ('evaluation/identity.json', '同模型对照校验')]:
+                        ('evaluation/candidate.json', '评分证据'), ('evaluation/identity.json', '同模型对照校验'),
+                        ('drawing-evaluation/quality.json', '专家偏好与碰撞明细'),
+                        ('drawing-evaluation/sections.json', '操作日志转换并核验后的 JSON')]:
         if (root / name).is_file():
             links.append(f'<a href="{name}">{title}</a>')
     preview = ('<img src="drawing/bundle/drawing.png" alt="最终图纸">'
@@ -39,13 +54,13 @@ def write_report(root: Path, summary: dict, filename: str = 'report.html') -> No
             '<p>模型：' + esc(summary.get('model')) + '。流程完成：' + esc(summary['success']) + '</p>'
             + ('<p>这是固定代码流程检查，不是模型运行，不能作为 AI 能力得分。</p>'
                if summary.get('trusted_replay') else '')
-            + '<p>' + scoring + '</p><p>剖切匹配、标注碰撞暂未评测；没有定义综合分。</p>'
+            + '<p>' + scoring + '</p><p>碰撞只检查标注之间；文字范围采用固定的近似估算。专家偏好须有同一 case 的专家 JSON 和通过核验的最终视图记录。</p>'
             '<table><tr><th>阶段</th><th>结束状态</th><th>决策轮数</th><th>代码执行数</th><th>秒</th></tr>'
             + ''.join(rows) + '</table><p>可见文本 token：输入 ' + esc(usage.get('input_tokens'))
             + '；输出 ' + esc(usage.get('output_tokens')) + '。真实计费费用未知。</p>'
             '<p>评测耗时：' + esc(round(summary.get('evaluation_seconds', 0), 2)) + ' 秒。</p><p>'
             + '控制程序错误：' + esc(summary.get('controller_error_type', '无')) + '。</p><p>'
-            + ' · '.join(links) + '</p>' + preview)
+            + ' · '.join(links) + '</p>' + view_section(views) + preview)
     write_new(root / filename, page.encode('utf-8'))
 
 

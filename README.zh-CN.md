@@ -1,5 +1,8 @@
 # BenchCAD 3D2D CadQuery
 
+工作台已支持按结果包自动导入多个 case 和同一 case 的多次运行。
+[结果包与同步协议](docs/WORKBENCH_RESULTS.md)说明自动收尾、仅重试上传、发布白名单和同机部署。
+
 当前是最小可用的开发试点：自定义 Responses API agent 在 Linux Docker 中
 完成 STEP→DXF；可选第二个独立 episode 仅根据冻结 DXF+PNG 重建 STEP。
 被测 agent 不是 Codex CLI。Windows 仅用于开发与离线单测。
@@ -36,16 +39,23 @@ export TIKTOKEN_CACHE_DIR="$PWD/.runs/tokenizer-cache"
   --iou-vendor /data/tools/benchcad-2-main
 ```
 
-默认每阶段最多 30 个决策响应、1800 秒，每次代码执行最多 300 秒，
+默认每阶段最多 60 个决策响应、7200 秒，每次代码执行最多 300 秒，
 1 CPU/4096 MiB。可用 CLI 或显式 `--config config.example.toml` 调低预算。
+每次 API 回复默认最多 500,000 个输出 token（包括推理），不是整阶段总量。
+历史运行保留原预算；明确授权的开发续跑累计计算此前轮次和有效时间。
+500K 是请求上限，不代表所有模型服务都支持。服务商拒绝时记录配置错误，
+不静默降低上限或切换模型；需要明确设置服务商支持的参数。
+2 小时是每阶段上限：出图和独立重建分别计时，评分使用单独的超时限制。
 每个运行目录必须全新；每次代码执行使用全新容器。worker 无网络、
 无 key、无主机 home/GT/Docker socket，系统只读，降权运行。
-绘图与重建不共享上下文、代码、日志或 STEP。提交失败后不再让模型修复。
+绘图与重建不共享上下文、代码、日志或 STEP。可修复的提交失败会在原有预算内反馈给模型。
 
 结果见 `summary.json`、各阶段 `episode/`、`executions/`、`bundle/`。
 冻结包只包含 DXF+PNG 或 STEP 及哈希 manifest；工作状态明确不可信。
 主计量为 `local_visible_text`，不是完整计费 token；provider usage 仅诊断，
-`actual_fee=null`。专家基线关闭，剖视/碰撞未评分，IoU 在独立评分环境运行。
+`actual_fee=null`。专家图纸重建基线关闭，IoU 在独立评分环境运行。
+新增[三项评分](docs/METRICS.md)：重建一致性、专家偏好、标注碰撞均为 0～1，最终分数为三者乘积。
+用 `--expert-json` 配置评测端专家 JSON；缺少专家文件、操作日志或几何核验时保留未评分，总分不补值。
 配置 `--iou-vendor` 后，程序会自动衔接独立评测、合入评分并生成 `report.html`；不再需要人工分别执行评分和汇总。未配置时明确显示未启用评测；失败不伪造零分。算法与依赖准备见 [归一化 IoU](evaluation/README.md)。API 请求受剩余阶段时间限制。
 
 离线测试：`python -m unittest discover -s tests -v`。本次单测不能证明

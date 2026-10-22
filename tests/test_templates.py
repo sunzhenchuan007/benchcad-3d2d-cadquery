@@ -145,6 +145,37 @@ class DrawingTemplateTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.Drawing(step=self.step, path=self.root / 'output.dxf', template=self.root / 'absent.dxf')
 
+    @unittest.skipUnless(importlib.util.find_spec('pymupdf'), 'PyMuPDF is required')
+    def test_preview_paper_template_matches_imported_sheet_without_mutation(self):
+        import ezdxf
+        from PIL import Image, ImageChops
+        from benchcad_cadquery.drawing import render
+        doc = ezdxf.readfile(self.template)
+        doc.layouts.get('Layout1').add_circle((30, 30), 10)
+        doc.saveas(self.template)
+        before = self.template.read_bytes()
+        flat = self.root / 'flat.dxf'
+        load_blank_template(self.template).saveas(flat)
+        paper_png, model_png = self.root / 'paper.png', self.root / 'model.png'
+        render(self.template, paper_png)
+        render(flat, model_png)
+        self.assertEqual(self.template.read_bytes(), before)
+        with Image.open(paper_png) as paper, Image.open(model_png) as model:
+            self.assertEqual(paper.size, (2100, 1500))
+            self.assertIsNone(ImageChops.difference(paper, model).getbbox())
+            self.assertIsNotNone(ImageChops.difference(
+                paper, Image.new('RGB', paper.size, 'white')).getbbox())
+
+    @unittest.skipUnless(importlib.util.find_spec('pymupdf'), 'PyMuPDF is required')
+    def test_preview_rejects_ambiguous_paper_templates(self):
+        import ezdxf
+        from benchcad_cadquery.drawing import render
+        doc = ezdxf.readfile(self.template)
+        doc.layouts.new('AnotherSheet').add_circle((10, 10), 3)
+        doc.saveas(self.template)
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            render(self.template, self.root / 'ambiguous.png')
+
 
 if __name__ == "__main__":
     unittest.main()

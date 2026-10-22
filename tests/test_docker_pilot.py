@@ -317,6 +317,7 @@ class StageTests(PilotTest):
         workspace = prepare_workspace(stage, 'drawing')
         (workspace / 'output/drawing.dxf').write_bytes(b'mock-dxf')
         (workspace / 'output/drawing.state.json').write_text('untrusted')
+        (workspace / 'output/drawing.operations.jsonl').write_text('tool log bytes')
         def validate(command, timeout, directory):
             clean = next((stage / 'finalize').glob('*/workspace'))
             self.assertEqual(set(p.name for p in clean.iterdir()), {'drawing.dxf'})
@@ -331,6 +332,10 @@ class StageTests(PilotTest):
             bundle = Path(finalizer(timeout=10))
             before = {p.name: p.read_bytes() for p in bundle.iterdir()}
             self.assertEqual(set(before), {'drawing.dxf', 'drawing.png', 'manifest.json'})
+            self.assertEqual((stage/'evidence/drawing.operations.jsonl').read_text(),'tool log bytes')
+            self.assertFalse(json.loads((stage/'evidence/capture.json').read_text())['content_verified'])
+            (workspace/'output/drawing.operations.jsonl').write_text('changed later')
+            self.assertEqual((stage/'evidence/drawing.operations.jsonl').read_text(),'tool log bytes')
             with self.assertRaises(FileExistsError):
                 finalizer(timeout=10)
             self.assertEqual(before, {p.name: p.read_bytes() for p in bundle.iterdir()})
@@ -390,7 +395,18 @@ class StageTests(PilotTest):
     def test_source_snapshot_is_explicit_allowlist(self):
         self.assertEqual(set(p.relative_to(self.source).as_posix() for p in self.source.rglob('*') if p.is_file()),
                          {'benchcad_cadquery/__init__.py', 'benchcad_cadquery/drawing.py',
-                          'benchcad_cadquery/templates.py', 'benchcad_cadquery/worker.py'})
+                          'benchcad_cadquery/templates.py', 'benchcad_cadquery/worker.py',
+                          'benchcad_cadquery/operations.py', 'benchcad_cadquery/inspection.py'})
+
+    def test_reconstruction_guide_omits_irrelevant_drawing_workflow(self):
+        workspace = prepare_workspace(self.root/'reconstruction', 'reconstruction')
+        guide = (workspace/'TOOLS.md').read_text(encoding='utf-8')
+        self.assertNotIn('render_step', guide)
+        self.assertIn('crop_image', guide)
+        self.assertNotIn('drawing.operations.jsonl', guide)
+        self.assertNotIn('Drawing(step=', guide)
+        drawing = prepare_workspace(self.root/'drawing', 'drawing')
+        self.assertIn('drawing.operations.jsonl', (drawing/'TOOLS.md').read_text(encoding='utf-8'))
 
     def test_initial_images_backward_compatible_and_context_fresh(self):
         seen = []
@@ -418,7 +434,35 @@ class StageTests(PilotTest):
         self.assertIn('only the supplied DXF/PNG', call.kwargs['system_prompt'])
 
 
+    def test_native_stage_replaces_legacy_format_in_task_and_prompt(self):
+        from benchcad_runtime.native_tools import PROTOCOL
+        bundle = self.fake_bundle()
+        step = self.root/'model.step'
+        step.write_bytes(b'test input')
+        for kind in ('drawing','reconstruction'):
+            with self.subTest(kind=kind):
+                root = self.root/('native-'+kind)
+                args = configure(parser().parse_args(['smoke','--run-dir',str(root)]))
+                model = SimpleNamespace(action_protocol=PROTOCOL)
+                with patch('benchcad_cadquery.cli.DockerExecutor'), patch('benchcad_cadquery.cli.run_episode') as episode:
+                    stage_episode(kind,root,self.source,args,model,step=step,drawing_bundle=bundle)
+                task = episode.call_args.args[3]
+                self.assertNotIn('```submit',task)
+                self.assertNotIn('Each response is exactly one nonempty',task)
+                self.assertIn('execute_python',task)
+                self.assertIn('Default limits:',task)
+                self.assertNotIn('```submit',episode.call_args.kwargs['system_prompt'])
+                self.assertNotIn('```submit',(root/kind/'workspace/TASK.md').read_text())
+
+
 class CLITests(PilotTest):
+    def test_provider_request_cap_can_be_selected(self):
+        (self.root/'bundle').mkdir()
+        args = configure(parser().parse_args(['reconstruct', '--run-dir', str(self.root/'run'),
+            '--drawing-bundle', str(self.root/'bundle'), '--model', 'deepseek-flash',
+            '--max-request-bytes', str(48*1024*1024)]))
+        self.assertEqual(args.max_request_bytes, 48*1024*1024)
+
     def test_sequential_api_orchestration_with_fake_transport_and_workers(self):
         step = self.root / 'input.step'
         step.write_bytes(b'original STEP must never reach reconstruction')
@@ -473,7 +517,7 @@ class CLITests(PilotTest):
         self.assertIsNone(report['actual_fee'])
 
     def test_budget_caps_no_default_model_and_config_compatibility(self):
-        for option, value in (('--rounds', '31'), ('--wall-seconds', '1801'), ('--execution-seconds', '301')):
+        for option, value in (('--rounds', '61'), ('--wall-seconds', '7201'), ('--execution-seconds', '301')):
             with self.subTest(option=option), self.assertRaises(ValueError):
                 configure(parser().parse_args(['smoke', '--run-dir', 'unused', option, value]))
         step = self.root / 'part.step'
@@ -486,6 +530,20 @@ class CLITests(PilotTest):
                                               '--config', str(config), '--rounds', '7']))
         self.assertEqual(args.model, 'parent-model')
         self.assertEqual(args.rounds, 7)
+        self.assertEqual(args.max_consecutive_output_limits, 2)
+        configured = configure(parser().parse_args(['smoke', '--run-dir', 'unused',
+                                                   '--max-consecutive-output-limits', '3']))
+        self.assertEqual(configured.max_consecutive_output_limits, 3)
+        self.assertEqual((configured.rounds, configured.wall_seconds, configured.max_output_tokens),
+                         (60, 7200, 500000))
+        for cap in (0, -1, 500001, True):
+            args = parser().parse_args(['smoke', '--run-dir', 'unused'])
+            args.max_output_tokens = cap
+            with self.subTest(output_cap=cap), self.assertRaises(ValueError):
+                configure(args)
+        with self.assertRaises(ValueError):
+            configure(parser().parse_args(['smoke', '--run-dir', 'unused',
+                                          '--max-consecutive-output-limits', '0']))
 
     def test_summary_does_not_invent_tokens_or_scores(self):
         value = summarize({}, 1, True, None)

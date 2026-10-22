@@ -32,6 +32,9 @@ def main():
         response = json.loads(raw)
         # Retain only fields consumed by the caller. No response account IDs.
         result = {k:response.get(k) for k in ('status','output','usage','model')}
+        details = response.get('incomplete_details')
+        if isinstance(details, dict) and details.get('reason') in ('max_output_tokens', 'content_filter'):
+            result['incomplete_details'] = {'reason': details['reason']}
     except urllib.error.HTTPError as exc:
         kind = 'transport_error' if exc.code in (408,429) or exc.code>=500 else 'fatal_error'
         result = {kind:f'API HTTP {exc.code}; request did not produce a usable decision',

@@ -6,6 +6,7 @@ import math
 import cadquery as cq
 import ezdxf
 from .templates import load_blank_template
+from .operations import append as record_operation
 from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
 from OCP.HLRAlgo import HLRAlgo_Projector
 from OCP.gp import gp_Ax2, gp_Pnt, gp_Dir, gp_Pln
@@ -84,6 +85,8 @@ class Drawing:
         self.state={'schema':'benchcad-cadquery-working-state/1','source_sha256':digest(self.step),
                     'template_sha256':digest(template_path) if use_template else None,
                     'views':[],'dimensions':[], 'section_evidence':'not_verified_agent_writable'}
+        record_operation(self.path,'drawing.started',{'source_sha256':self.state['source_sha256'],
+                         'units':'mm','coordinate_frame':'source_step'},reset=True)
 
     @classmethod
     def open(cls, step='input/model.step', path='output/drawing.dxf'):
@@ -133,12 +136,15 @@ class Drawing:
         insert=self.doc.modelspace().add_blockref(block.name,position,dxfattribs={'xscale':scale,'yscale':scale,'zscale':scale})
         view={'id':name,'type':'projection','normal':n.toTuple(),'xdir':x.toTuple(),
               'position':list(position),'scale':scale,'insert_handle':insert.dxf.handle,
-              'block':block.name,'curve_deflection_paper_mm':.02}
+              'block':block.name,'curve_deflection_paper_mm':.02,'projection_scope':'custom_geometry'}
         self.state['views'].append(view)
         return view,block,(x,y,n)
 
     def projection(self,name,normal=(0,0,1),xdir=(1,0,0),position=(100,180),scale=1):
-        return self._project(self.model,name,normal,xdir,position,scale)[0]
+        view=self._project(self.model,name,normal,xdir,position,scale)[0]
+        view['projection_scope']='whole_model'
+        record_operation(self.path,'view.created',view)
+        return view
 
     def full_section(self,name,point,normal,xdir=(1,0,0),position=(280,180),scale=1,keep_side=-1):
         if keep_side not in (-1,1):raise ValueError('keep_side must be -1 or 1')
@@ -165,12 +171,13 @@ class Drawing:
                 hatch.paths.add_polyline_path(pts,is_closed=True,flags=1 if wire.isSame(outer) else 0)
         view.update(type='full_section',plane={'point':origin.toTuple(),'normal':n.toTuple()},keep_side=keep_side,
                     section_area_mm2=sum(f.Area() for f in faces),material_faces=len(faces))
+        record_operation(self.path,'view.created',view)
         return view
 
     def linear_dimension(self,p1,p2,base,angle=0,view=None,text='<>'):
         scale=1 if view is None else self.view(view)['scale']
         dim=self.doc.modelspace().add_linear_dim(base=base,p1=p1,p2=p2,angle=angle,
-                  text=text,dimstyle='BC_DIM',override={'dimlfac':1/scale})
+                  text=text,dimstyle='BC_DIM',override={'dimlfac':1/scale},dxfattribs={'layer':'DIMENSIONS'})
         dim.render()
         self.state['dimensions'].append({'handle':dim.dimension.dxf.handle,'view':view,'scale':scale})
         return dim.dimension.dxf.handle
@@ -185,14 +192,18 @@ class Drawing:
         self.doc.modelspace().delete_entity(self.doc.entitydb[v['insert_handle']])
         self.doc.blocks.delete_block(v['block'],safe=True)
         self.state['views'].remove(v)
+        record_operation(self.path,'view.deleted',{'id':name})
 
     def note(self,text,position,height=3.5):
-        self.doc.modelspace().add_text(text,dxfattribs={'style':'BENCHCAD','height':height,'insert':position})
+        if 'ANNO_TEXT' not in self.doc.layers:self.doc.layers.new('ANNO_TEXT')
+        self.doc.modelspace().add_text(text,dxfattribs={'style':'BENCHCAD','height':height,'insert':position,'layer':'ANNO_TEXT'})
 
     def save(self):
         self.doc.saveas(self.path)
         self.state['dxf_sha256']=digest(self.path)
         self.path.with_suffix('.state.json').write_text(json.dumps(self.state,indent=2),encoding='utf-8')
+        record_operation(self.path,'drawing.exported',{'dxf_sha256':self.state['dxf_sha256'],
+                         'views':self.state['views']})
 
     def preview(self,path='preview.png'):
         self.save()
@@ -200,11 +211,16 @@ class Drawing:
 
 
 def render(dxf,path):
+    """Preview model-space geometry, or a single blank mm paper-space sheet."""
     from ezdxf.addons.drawing import Frontend,RenderContext,layout,config
     from ezdxf.addons.drawing.pymupdf import PyMuPdfBackend
     import pymupdf as fitz
     from PIL import Image
     doc=ezdxf.readfile(dxf)
+    if not len(doc.modelspace()):
+        # Supplied blank templates keep their frame in paper space. Use the
+        # same validated conversion as Drawing(), without changing the source.
+        doc=load_blank_template(dxf)
     backend=PyMuPdfBackend()
     settings=config.Configuration(background_policy=config.BackgroundPolicy.WHITE,
                                   color_policy=config.ColorPolicy.BLACK)

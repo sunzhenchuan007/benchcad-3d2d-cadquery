@@ -3,7 +3,11 @@
 `normalized_iou.py` runs after the reconstruction episode has ended. It reads
 the reference STEP and frozen reconstructed STEP in a separate evaluator.
 Neither the reference nor this evaluator is mounted into the reconstruction
-worker. Section matching and annotation collision remain unimplemented interfaces.
+worker. Expert preference and annotation collision now run separately on the
+final drawing; see [the three-component policy](../docs/METRICS.md). All new
+summary scores are in 0..1 and the aggregate is their product; missing evidence
+leaves the aggregate null. Low-level historical IoU artifacts retain their
+explicitly named `reconstruction_score_100` field.
 
 The adapter uses the geometry modules from
 [`BenchCAD-org/benchcad-2-main`](https://github.com/BenchCAD-org/benchcad-2-main)
@@ -65,7 +69,7 @@ the separate evaluator image. The vendor checkout is a controller-side prerequis
 it is never supplied to either model stage. Without a vendor path, the report
 explicitly says `evaluation_not_configured`.
 
-Both identity and candidate evaluations share `--evaluation-seconds` (default 300).
+Both identity and candidate evaluations share `--evaluation-seconds` (default 400).
 Infrastructure errors produce a null score with failure status, not a zero score.
 For a previously finished run, `benchcad evaluate --run-dir ... --reference-step ...
 --iou-vendor ...` adds evaluation records and an evaluated summary/report without
